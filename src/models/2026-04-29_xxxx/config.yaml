@@ -1,0 +1,48 @@
+# Simple Assembly Factory — input parameters
+#
+# Generates a small synthetic factory where every workstation is an assembly
+# station. Raw materials come from :Inv, finished products go to :QI.
+#
+# BOM tree:  raw materials (level 0) → intermediates (1..depth-1) → products (level=depth)
+# Every component with level > 0 (intermediate OR product) gets at least one
+# producing configuration on some assembly workstation.
+
+metadata:
+  name: "simple_assembly_factory"
+  seed: 42                      # null for non-reproducible
+
+# Bill of materials —————————————————————————————————————————————————
+bom:
+  n_products: 2
+  depth: 2                      # 2 ⇒ raw → intermediate → product
+  branching: [2, 3]             # children per parent (uniform random in range)
+  quantity: [1, 3]              # qty on each BOM edge
+  sharing_ratio: 0.3            # P(reuse existing component at same level)
+
+# Workstations —————————————————————————————————————————————————————
+# All workstations are assembly. :Inv (source) and :QI (sink) added automatically.
+workstations:
+  count: 4
+
+# Configurations (workstation × component capability) ————————————————
+configurations:
+  producers_per_component: [1, 2]   # clamped to ≤ workstations.count
+  processing_time: [0.1, 0.5]       # hours per unit
+  setup_time:      [0.5, 2.0]       # hours per setup
+  setup_cost:      [50, 300]        # cost per setup
+  operating_cost:  [2, 15]          # cost per unit produced
+
+# Layout ——————————————————————————————————————————————————————————————
+# topology:
+#   parallel — Inv → every assembly WS → QI (independent stations)
+#   linear   — Inv → WS_1 → WS_2 → … → WS_n → QI (single line)
+layout:
+  topology: "parallel"
+  flow_capacity:  [50, 200]
+  transport_cost: [0.5, 5.0]
+
+# Output ——————————————————————————————————————————————————————————————
+# Relative path → resolved next to this script.
+# Absolute path → used as-is (e.g. "C:/data/factory" or "/tmp/factory").
+output:
+  directory: "output"
