@@ -3,7 +3,7 @@ import plotly.graph_objects as go
 import networkx as nx
 import os
 
-OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
+OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "gen_output")
 
 layout_df = pd.read_csv(os.path.join(OUTPUT_DIR, "layout.csv"))
 ws_df     = pd.read_csv(os.path.join(OUTPUT_DIR, "workstations.csv"))

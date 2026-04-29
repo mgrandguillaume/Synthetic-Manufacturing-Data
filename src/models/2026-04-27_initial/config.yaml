@@ -45,4 +45,4 @@ layout:
 # Relative path → resolved next to this script.
 # Absolute path → used as-is (e.g. "C:/data/factory" or "/tmp/factory").
 output:
-  directory: "output"
+  directory: "gen_output"

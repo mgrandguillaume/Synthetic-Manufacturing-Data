@@ -1,7 +1,7 @@
 import pandas as pd
 import os
 
-OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gen_output")
 SIM_DIR    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sim_output")
 N_ORDERS   = 10
 
