@@ -31,3 +31,17 @@ The goal is to produce synthetic factory data that is more
 representative of the diversity of real manufacturing systems, 
 and more useful for researchers benchmarking optimization and 
 simulation models.
+
+
+## Development
+
+### Possible additions to the model
+Generation
+- Add intermediate topology (in between parallel and series)
+- Add a 'broken machine' function / failure rate / downtime
+- Add the fact that new machines are more efficient
+- Buffer capacity
+- Failure rates
+
+Simulation
+- How the 
