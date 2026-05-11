@@ -5,6 +5,7 @@
 #
 # Run:  python generate.py
 
+import math
 import os
 import random
 import csv
@@ -65,7 +66,6 @@ def _build_factory(
     prod_min:      int,   prod_max:   int,
     pt_r:  list,  st_r: list,
     sc_r:  list,  oc_r: list,
-    topology: str,
     cap_r: list,  cost_r: list,
 ) -> dict:
     """
@@ -79,8 +79,6 @@ def _build_factory(
     assert branch_min >= 1,           "branching[0] must be >= 1"
     assert branch_max >= branch_min,  "branching range invalid"
     assert n_ws >= 1,                 "workstations_count must be >= 1"
-    assert topology in ("parallel", "linear"), \
-        "topology must be 'parallel' or 'linear'"
 
     components:   list[Component]   = []
     bom_edges:    list[BomEdge]     = []
@@ -133,18 +131,40 @@ def _build_factory(
         workstations.append(Workstation(id=ws_id, name=f"Assembly {i}", type="production"))
         assembly_ws.append(ws_id)
 
-    # --- Configurations ----------------------------------------------------------
-    prod_min = min(prod_min, n_ws)
-    prod_max = max(prod_min, min(prod_max, n_ws))
+    # --- Stage assignment --------------------------------------------------------
+    # Build a level lookup from the components list constructed above.
+    comp_level: dict[str, int] = {c.id: c.level for c in components}
+    # Workstations are divided into `depth` stages, one stage per BOM level.
+    # A component at level l can only be produced by workstations in stage l.
+    #
+    # This encodes the alpha (α = depth / n_ws) topology concept from Lopes
+    # et al. directly into the configuration assignment:
+    #   α ≈ 1  →  one workstation per stage  →  serial, specialised machines
+    #   α ≈ 0  →  many workstations per stage →  parallel capacity at each stage
+    #
+    # Workstations are split as evenly as possible across stages using
+    # floor-based index arithmetic.  If n_ws < depth, affected stages fall
+    # back to the full workstation pool so every component stays producible.
+    stage_ws: dict[int, list[str]] = {}
+    n_total = len(assembly_ws)
+    for lvl in range(1, depth + 1):
+        start = math.floor((lvl - 1) * n_total / depth)
+        end   = math.floor(lvl       * n_total / depth)
+        stage_ws[lvl] = assembly_ws[start:end] if start < end else assembly_ws
 
+    # --- Configurations ----------------------------------------------------------
     def usample(r: list) -> float:
         return random.uniform(r[0], r[1])
 
     configurations: list[Configuration] = []
     cfg_idx = 0
     for comp in producible:
-        n = random.randint(prod_min, prod_max)
-        chosen = random.sample(assembly_ws, n)
+        lvl      = comp_level[comp]
+        eligible = stage_ws.get(lvl, assembly_ws)
+        # Clamp producers_per_component to the number of eligible workstations.
+        lo = min(prod_min, len(eligible))
+        hi = max(lo, min(prod_max, len(eligible)))
+        chosen = random.sample(eligible, random.randint(lo, hi))
         for ws in chosen:
             cfg_idx += 1
             configurations.append(Configuration(
@@ -154,6 +174,16 @@ def _build_factory(
             ))
 
     # --- Layout ------------------------------------------------------------------
+    # The layout is derived directly from the stage assignment so that it
+    # reflects the actual α (serial ↔ parallel) structure of the factory:
+    #
+    #   Inv  →  every workstation in stage 1
+    #   stage l  →  every workstation in stage l+1   (for l = 1 … depth-1)
+    #   stage depth  →  QI
+    #
+    # Within each stage the workstations are parallel; between stages the
+    # flow is serial.  α ≈ 1 (one WS per stage) collapses to a linear chain;
+    # α ≈ 0 (many WSs per stage, few stages) gives a wide parallel structure.
     layout_edges: list[LayoutEdge] = []
 
     def edge(o: str, d: str):
@@ -163,15 +193,14 @@ def _build_factory(
             cost=usample(cost_r),
         ))
 
-    if topology == "parallel":
-        for ws in assembly_ws:
-            edge("Inv", ws)
-            edge(ws, "QI")
-    else:
-        edge("Inv", assembly_ws[0])
-        for i in range(len(assembly_ws) - 1):
-            edge(assembly_ws[i], assembly_ws[i + 1])
-        edge(assembly_ws[-1], "QI")
+    for ws in stage_ws[1]:
+        edge("Inv", ws)
+    for lvl in range(1, depth):
+        for ws_from in stage_ws[lvl]:
+            for ws_to in stage_ws[lvl + 1]:
+                edge(ws_from, ws_to)
+    for ws in stage_ws[depth]:
+        edge(ws, "QI")
 
     # --- Validate ----------------------------------------------------------------
     produced = {c.component for c in configurations}
@@ -257,7 +286,6 @@ def generate_simple_assembly(config_path: str, export_csv: bool = True) -> dict:
         st_r          = cc["setup_time"],
         sc_r          = cc["setup_cost"],
         oc_r          = cc["operating_cost"],
-        topology      = lay.get("topology", "parallel"),
         cap_r         = lay["flow_capacity"],
         cost_r        = lay["transport_cost"],
     )
@@ -286,7 +314,7 @@ def generate_from_params(params: dict, export_csv: bool = False,
     n_products, depth, branching, quantity, sharing_ratio,
     workstations_count, producers_per_component,
     processing_time, setup_time, setup_cost, operating_cost,
-    topology, flow_capacity, transport_cost
+    flow_capacity, transport_cost
 
     Optional keys
     -------------
@@ -311,7 +339,6 @@ def generate_from_params(params: dict, export_csv: bool = False,
         st_r          = params["setup_time"],
         sc_r          = params["setup_cost"],
         oc_r          = params["operating_cost"],
-        topology      = params.get("topology", "parallel"),
         cap_r         = params["flow_capacity"],
         cost_r        = params["transport_cost"],
     )

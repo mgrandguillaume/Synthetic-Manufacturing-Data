@@ -1,6 +1,6 @@
 # Simple Assembly Factory — Synthetic Data Model
 
-This model generates and simulates a small synthetic assembly factory driven by a single config file (`config.yaml`). Running **Generate** first produces the factory structure; running **Simulate** replays orders through it.
+This model generates and simulates a small synthetic assembly factory driven by a single config file (`config.yaml`). Running **Generate** first produces the factory structure; running **Simulate** replays production orders through it using a Discrete-Time Simulation. Running **Sweep** repeats this across a grid of structural parameters for analysis.
 
 ---
 
@@ -17,27 +17,26 @@ The generator builds a complete factory description from `config.yaml` and write
 **Workstations**  
 A workstation represents a single machine or assembly station on the factory floor. Each workstation can perform one type of operation at a time. They are represented as nodes.
 
-**Connections**     
+**Connections**  
 Connections are directed edges between workstations that define the path materials travel through the factory. A connection from workstation A to workstation B means that output from A flows as input into B.
 
 Two fixed nodes are always present: Inv (Inventory) as the source, where all raw materials originate, and QI (Quality Inspection) as the sink, where finished products exit the factory. A configurable number of assembly workstations (WS_1, WS_2, …) are placed in between.
 
 **Structure**  
-The workstations are represented in a Directed Acyclic Graph (DAG) structure. Workstations are represented as nodes which are connected by edges representing the flow of materials. 
+The workstations are represented in a Directed Acyclic Graph (DAG) structure. Workstations are represented as nodes which are connected by edges representing the flow of materials.
 
-The graph is structured with the specific conventions. As a basis, the graph contains 'levels' which represent a new stage in the processing flow. The level numbers run from the bottom up: raw materials sit at `level 0`, intermediate components (`COMP_*`) occupy the levels in between, and finished products (`PROD_*`) sit at the highest level (`level = depth`). So a higher level number means closer to the finished product, following conventions used in ERP systems.
+The graph is structured with specific conventions. As a basis, the graph contains 'levels' which represent a new stage in the processing flow. The level numbers run from the bottom up: raw materials sit at `level 0`, intermediate components (`COMP_*`) occupy the levels in between, and finished products (`PROD_*`) sit at the highest level (`level = depth`). So a higher level number means closer to the finished product, following conventions used in ERP systems.
 
 Components are automatically assigned an ID using the format `<TYPE>_L<level>_<counter>`:
 - **`RAW_L0_3`** — the 3rd raw material at level 0
 - **`COMP_L1_1`** — the 1st intermediate component created at BOM level 1
 - **`PROD_2`** — the 2nd finished product (products drop the level suffix as they always sit at the top)
 
-
 The following diagram depicts these conventions.
 
 ```
 Level = 2 (depth)       PROD_1
-                        /    \ 
+                        /    \
 Level = 1           COMP_L1_1  COMP_L1_2
                     /    \
 Level = 0       RAW_L0_1  RAW_L0_2
@@ -51,19 +50,19 @@ Now that the standard conventions have been specified, the configurations of the
 
 The `workstation configurations` regard the settings that can be applied to these workstations. These are described in the following table.
 
-| Parameter                 | Description                                                                                                                    |
-|---------------------------|--------------------------------------------------------------------------------------------------------------------------------|
-| `workstation_count`       | The number of workstations                                                                                                     |
-| `producers_per_component` | How many workstations are capable of producing each component (randomly sampled per component, clamped to ≤ workstation count) |
-| `processing_time`         | Time to produce one unit of a component                                                                                        |
-| `setup_time`              | Time required for a changeover when a workstation switches to a different component                                            |
-| `setup_cost`              | Cost charged once per changeover                                                                                               |
-| `operating_cost`          | Cost per unit produced                                                                                                         |
+| Parameter                 | Description                                                                                                                                                    |
+|---------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `workstation_count`       | The number of workstations                                                                                                                                     |
+| `producers_per_component` | How many workstations are capable of producing each component (randomly sampled per component, clamped to ≤ the number of workstations in that component's stage) |
+| `processing_time`         | Time to produce one unit of a component                                                                                                                        |
+| `setup_time`              | Time required for a changeover when a workstation switches to a different component                                                                            |
+| `setup_cost`              | Cost charged once per changeover                                                                                                                               |
+| `operating_cost`          | Cost per unit produced                                                                                                                                         |
 
 **Bill of materials**
 
 A Bill of Materials (BOM) is a structured list of all components, sub-components, and raw materials required to produce a finished product, along with the quantities needed at each stage. In a manufacturing context it defines what needs to be made and from what.
-The model allows us to configurate the BOM through the `bill of materials configurations`. The following table states these configurations.
+The model allows us to configure the BOM through the `bill of materials configurations`. The following table states these configurations.
 
 | Parameter | Description |
 |---|---|
@@ -89,7 +88,7 @@ Level = 1  C1    C2    C3    C4         Level = 1  C1     C2      C1    C3
 
 Where `C1` = `COMP_L1_1`, `C2` = `COMP_L1_2`, etc. In the sharing example, `COMP_L1_1` is required by both `PROD_1` and `PROD_2`, so instead of 4 unique level-1 components there are only 3.
 
-Note that the `branching` value is randomly drawn from a uniform distribution independently for every component
+Note that the `branching` value is randomly drawn from a uniform distribution independently for every component.
 ```
 branching = 2:          branching = 3:
 
@@ -100,23 +99,47 @@ Level = 0  R1      R2   Level = 0   R1   R2   R3
 
 **Layout**
 
-Finally, the `layout` of the structure can be configured with the following variables stated in the table.
-
-| Parameter | Description                                                                                                                                          |
-|---|------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `topology` | How workstations are connected: `parallel` (Inventory → each WS → QI independently) or `linear` (Inventory → WS_1 → WS_2 → … → QI as a single chain) |
-| `flow_capacity` | Maximum number of units that can flow along an edge (randomly sampled within range, sampled per workstaion connection)                               |
-| `transport_cost` | Cost per unit transported along an edge (randomly sampled within range)                                                                              |
-
-The following diagram illustrates the two topology types.
+The layout of the factory is derived automatically from a **stage assignment** based on the BOM depth and workstation count. The key concept is the **alpha (α) parameter**:
 
 ```
-topology = "parallel":            topology = "linear":
-
-         ┌── WS_1 ──┐                  Inv ── WS_1 ── WS_2 ── WS_3 ── QI
-Inv ─────┼── WS_2 ──┼───── QI
-         └── WS_3 ──┘
+α = depth / workstations_count
 ```
+
+Alpha controls how many workstations are assigned to each BOM stage:
+- **α ≈ 1** — roughly one workstation per stage; the factory is serial and each workstation is specialised for one BOM level.
+- **α ≈ 0** — many workstations per stage; the factory is wide and parallel with high redundant capacity at each level.
+
+The workstations are divided into `depth` groups (stages) using floor-based arithmetic. A workstation in stage *l* can only produce components at BOM level *l*. The layout edges follow directly from this assignment:
+
+- **Inv → every workstation in stage 1** (raw materials enter at the first processing stage)
+- **Every workstation in stage *l* → every workstation in stage *l*+1** (for l = 1 … depth−1)
+- **Every workstation in stage depth → QI** (finished products leave the factory)
+
+Within each stage the workstations operate in parallel; between stages the flow is serial.
+
+```
+depth = 3, workstations = 3  (α = 1.0 — one WS per stage, serial):
+
+Inv ── WS_1 ──────────── WS_2 ──────────── WS_3 ── QI
+       stage 1            stage 2            stage 3
+      (level 1)          (level 2)          (level 3)
+
+
+depth = 2, workstations = 4  (α = 0.5 — two WSs per stage, parallel):
+
+           ┌── WS_1 ──┐               ┌── WS_3 ──┐
+Inv ───────┤           ├───────────────┤           ├─── QI
+           └── WS_2 ──┘               └── WS_4 ──┘
+           ──── stage 1 ────           ──── stage 2 ────
+             (BOM level 1)               (BOM level 2)
+```
+
+The two configurable layout parameters control edge properties:
+
+| Parameter | Description |
+|---|---|
+| `flow_capacity` | Maximum number of units that can flow along an edge (randomly sampled within range per edge) |
+| `transport_cost` | Cost per unit transported along an edge (randomly sampled within range per edge) |
 
 ### Output files
 
@@ -133,65 +156,159 @@ Inv ─────┼── WS_2 ──┼───── QI
 ## Simulate
 
 **Script:** `simulate/simulate.py`  
-**Dependency:** `pip install pandas`  
+**Dependency:** `pip install pandas pyyaml`  
 **Run:** `python simulate/simulate.py`
 
-The simulator reads the five CSVs produced by Generate and replays a series of production orders through the factory. It uses a simple discrete-event-style scheduler (no external simulation library) and writes its results to `simulate/sim_output/`.
+The simulator reads the five CSVs produced by Generate and replays a series of production orders through the factory. It uses a **Discrete-Time Simulation (DTS)** approach: time advances in fixed steps called *ticks*, and every workstation is evaluated simultaneously at each tick. This allows multiple workstations to produce different components at the same time (concurrency), and captures two failure modes that a purely sequential scheduler cannot see:
+
+- **Blocking** — a workstation has finished a job but the output buffer is full; it holds the units and waits until space opens up downstream.
+- **Starvation** — a workstation is ready to start a job but the input components it needs have not yet arrived in the buffer; it waits until upstream production catches up.
+
+All simulation parameters (`tick_duration`, `buffer_capacity`, `order_interarrival`, `n_ticks`, `n_orders`) are set in the `simulation:` section of `config.yaml`. Results are written to `simulate/sim_output/`.
 
 ### What it does
 
-**Order assignment**
+**Order release**
 
-The simulation runs a fixed number of production orders (`N_ORDERS`), processing them one at a time in sequence. Each order is always for exactly one unit of a product.
+Orders are not all released at the start. Instead, one order is released every `order_interarrival` ticks. This spreads demand out over time and allows the factory to process earlier orders while new ones are still arriving.
 
-The simulator known the number of total orders, and the number of all the possible output products (decided in the generation stage). The orders do not specify what product is needed, so it evenly divides the orders over all possible products.  With 2 products and 6 orders, each product gets exactly 3 orders. With 2 products and 5 orders, the first product gets 3 and the second gets 2.
+Each order is for exactly one unit of a product. The simulator cycles evenly through all available products: with 2 products and 6 orders, each gets 3 orders; with 2 products and 5 orders, the first gets 3 and the second gets 2.
 
 **BOM explosion**
 
-Before any production can be scheduled, the simulator needs to know the total number of units of *every* component required to fulfil the order; not just the direct inputs of the product, but the inputs of those inputs, all the way down to raw materials. This process is called a BOM explosion.
+When an order is released, the simulator performs a BOM explosion to determine the total number of units of every component required — not just the direct inputs of the product, but the inputs of those inputs, all the way down to raw materials.
 
 It works top-down, level by level. Starting with one unit of the finished product, the simulator looks up what that product directly requires and in what quantities. It then moves down one level and repeats for each of those components, multiplying quantities as it goes. This continues until raw materials are reached.
 
 The reason it must go level by level rather than expanding each branch independently is **shared components**. If the same intermediate component appears under two different parents, its required quantity must be accumulated from both parents before its own inputs are expanded; otherwise the raw material quantities would be undercounted.
 
-The result is a flat list of every component involved in the order and exactly how many units of each are needed.
+The result is a flat list of every non-raw component required for this order and exactly how many units of each are needed. Each entry becomes a *demand item* in the simulation queue.
 
-**Scheduling**
+**Tick loop**
 
-With the full list of required components and quantities known, the simulator schedules their production from the bottom up: raw materials first, then intermediate components, then the finished product. This mirrors physical reality; a component cannot be assembled until all of its inputs are ready.
+Each tick, the simulator steps through the following actions in order:
 
-Raw materials are assumed to be available from Inventory instantly at no production cost, so they require no scheduling. This is the **infinite supply assumption**.
+1. **Release** — if enough ticks have passed since the last order, release a new one and add its demand items to the queue.
+2. **Advance jobs** — every workstation that is in setup or processing has its remaining tick counter decremented by one. If a job finishes, its output is ready to be deposited.
+3. **Deposit output** — the finished units are moved into the component's buffer. If the buffer is full (stock has reached `buffer_capacity`), the workstation enters the **blocked** state and retries on the next tick.
+4. **Assign work** — idle workstations are matched to pending demand items, processed from the lowest BOM level upward so that sub-components are always produced before the assemblies that need them. A demand item can only be assigned once all of its non-raw input components are already in the buffer (raw materials use the **infinite supply assumption** — they are always available at no production cost). The workstation that would finish earliest is selected; if it is not yet configured for this component, a **setup** phase is added first.
+5. **Classify idle workstations** — any workstation that has pending demand it could handle but cannot start because upstream components are not yet ready is marked as **starved**.
+6. **Log** — each workstation's current state is recorded for this tick, along with the current stock level of every non-raw component buffer.
 
-For every other component, the simulator looks at all workstations capable of producing it and asks: *which one would finish this job the earliest?* For each candidate workstation it considers three things:
-
-- **Availability** - when does the workstation finish its current job? The new job cannot start before then.
-- **Setup changeover** - is the workstation currently configured for a different component? If so, a setup period must happen before production can begin. If the workstation is already configured for this component (from a previous job), no setup is needed and production starts immediately.
-- **Processing time** - how long does it take to produce the required number of units at this workstation? Processing time scales linearly with quantity.
-
-The workstation with the earliest projected finish time is selected. The job is then locked in: a setup event is recorded if a changeover was needed, followed by a processing event. The workstation is marked as occupied until the job is complete, and its current configuration is updated to reflect the new component so future jobs know whether a changeover will be needed.
-
-A component can only begin once *all* of its inputs are finished. If two inputs finish at different times, the component waits for the slowest one. The time spent waiting, from when the last input was ready to when processing actually started, is recorded as the wait time for that job.
+The simulation runs until all orders are complete or the tick limit (`n_ticks`) is reached.
 
 **Cost tracking**
 
 Three types of cost are accumulated throughout the simulation:
 
-- **Setup cost** - charged once each time a workstation switches from producing one component to another.
-- **Operating cost** - charged per unit produced at a workstation.
-- **Transport cost** - charged per unit moved from Inventory to the workstation, based on the cost of that connection in the layout.
+- **Setup cost** — charged once each time a workstation switches from producing one component to another.
+- **Operating cost** — charged per unit produced at a workstation.
+- **Transport cost** — charged per unit moved into a workstation, calculated as the average cost of all incoming layout edges for that workstation. Stage-1 workstations are fed directly from Inv; higher-stage workstations are fed from the previous stage's workstations.
 
 These are tracked per workstation and summed over all orders.
 
 **Utilisation**
 
-Once all orders are complete, the simulator calculates how each workstation spent its time over the full simulation. The time from the start until the last job finishes across all workstations defines the total time span. Each workstation's time is then broken down into three categories: time spent actively producing (`busy`), time spent on setup changeovers (`setup`), and time spent waiting with nothing to do (`idle`).
+Each workstation spends every tick in exactly one of five states. At the end of the simulation the total time and percentage spent in each state is computed per workstation:
+
+- **Processing** — actively producing units.
+- **Setup** — performing a changeover before switching to a new component type.
+- **Blocked** — processing is done but the output buffer is full; waiting for space to open.
+- **Starved** — has pending demand but the required input components are not yet in the buffer.
+- **Idle** — no pending demand; nothing to do.
 
 ### Output files
 
 | File | Contents |
 |---|---|
-| `gantt.csv` | Start and finish time of every setup and processing event, per workstation and order |
-| `utilization.csv` | Total busy, setup, and idle time per workstation over the full simulation |
-| `throughput.csv` | Completion time and cumulative order count for each finished order |
+| `states.csv` | Per-tick record of every workstation's state (`idle`, `setup`, `processing`, `blocked`, or `starved`) |
+| `utilization.csv` | Time (hours) and percentage spent in each of the five states per workstation |
+| `throughput.csv` | Completion time, cumulative order count, and lead time for each finished order |
 | `costs.csv` | Setup, operating, and transport costs aggregated per workstation |
-| `wait_times.csv` | How long each component waited at its workstation before processing began |
+| `buffers.csv` | Stock level of every non-raw component buffer at every tick |
+
+---
+
+## Sweep
+
+**Script:** `sweep.py`  
+**Dependencies:** `pip install pyyaml pandas`  
+**Run:** `python sweep.py`
+
+The sweep runs Generate and Simulate for every combination of a set of structural parameters, and collects all outputs into aggregated CSVs. This allows the effect of each parameter on factory performance to be studied across the full parameter space.
+
+### Parameter groups
+
+The sweep uses three parameter groups:
+
+**`PARAM_GRID`** — the parameters that are swept. Every combination is tested (81 runs total):
+
+| Parameter | Values |
+|---|---|
+| `n_products` | 1, 2, 4 |
+| `depth` | 1, 2, 3 |
+| `workstations_count` | 2, 4, 8 |
+| `sharing_ratio` | 0.0, 0.5, 1.0 |
+
+**`FIXED_PARAMS`** — factory structure parameters held constant across all runs. Values are given as ranges `[min, max]`; the generator samples uniformly within these ranges for each run, introducing natural variation. A fixed `seed` ensures reproducibility.
+
+**`SIM_PARAMS`** — simulation settings (`n_orders`, `tick_duration`, `buffer_capacity`, `order_interarrival`, `n_ticks`) that are identical for every run.
+
+### Alpha (α)
+
+For each run, the alpha parameter is computed as:
+
+```
+α = depth / workstations_count
+```
+
+Alpha is a derived topology metric that summarises the serial/parallel structure of the factory (see the Layout section under Generate). It is prepended to every output row so that results can be grouped and plotted against it directly.
+
+### Output files
+
+| File | Contents |
+|---|---|
+| `gen_stats.csv` | Per-run factory structure counts: raw materials, non-raw components, configurations, layout edges |
+| `state_summary.csv` | Per-run, per-tick state percentages (Working / Starved / Blocked) averaged across all workstations |
+| `utilization.csv` | Per-run utilization breakdown across all workstations |
+| `throughput.csv` | Per-run throughput and lead time for each completed order |
+| `costs.csv` | Per-run cost breakdown per workstation |
+
+All files include the run's sweep parameters and alpha as leading columns so rows from different runs can be distinguished and filtered.
+
+---
+
+## Visualize
+
+### Single simulation run
+
+**Script:** `simulate/visualize_sim.py`  
+**Run:** `python simulate/visualize_sim.py`
+
+Reads the CSVs from `simulate/sim_output/` and shows five charts:
+
+1. **Machine state % over iterations** — for every tick, the percentage of all workstations in the Working, Starved, and Blocked states. Faint raw lines show per-tick values; bold lines show a rolling average. This chart follows the CLEMATIS convention from Lopes et al.
+2. **Utilisation by workstation** — stacked bar showing how each workstation split its time across all five states.
+3. **Throughput over time** — cumulative completed orders as a step chart, with mean lead time annotated.
+4. **Cost breakdown** — stacked bar of setup, operating, and transport costs per workstation.
+5. **Component buffer levels** — stock of each non-raw component buffer over time, with a capacity reference line.
+
+### Parameter sweep
+
+**Script:** `visualize_sweep.py`  
+**Run:** `python visualize_sweep.py`
+
+Reads the CSVs from `sweep_output/` and shows nine charts organised into two sections:
+
+**Generation Graphs** — properties of the generated factory structure as a function of the generation parameters:
+1. Non-raw component count vs BOM depth (split by number of products)
+2. Configuration count vs number of workstations (split by depth)
+
+**Simulation Graphs** — DTS performance metrics across the parameter space:
+3. Makespan vs α (split by depth)
+4. Mean busy utilisation vs sharing ratio (split by number of products)
+5. Total cost vs BOM depth — bar chart (split by number of products)
+6. Mean lead time vs α (split by depth)
+7. Starved % vs α (split by depth)
+8. Mean state % over iterations — sweep-wide average of the CLEMATIS chart
+9. **% Working machines vs α** (full-width) — shows how machine utilisation changes with the serial/parallel topology ratio, split by depth so each line covers its own α range

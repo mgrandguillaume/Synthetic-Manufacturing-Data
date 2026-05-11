@@ -45,3 +45,6 @@ Generation
 
 Simulation
 - How the 
+
+Input
+- Give a standard distribution per input variable, less user overwrite this with a constant value if inputted

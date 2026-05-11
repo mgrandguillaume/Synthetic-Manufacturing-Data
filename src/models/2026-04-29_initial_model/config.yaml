@@ -33,13 +33,23 @@ configurations:
   operating_cost:  [2, 15]          # cost per unit produced
 
 # Layout ——————————————————————————————————————————————————————————————
-# topology:
-#   parallel — Inv → every assembly WS → QI (independent stations)
-#   linear   — Inv → WS_1 → WS_2 → … → WS_n → QI (single line)
+# The layout graph is derived automatically from the stage assignment:
+#   Inv → stage-1 workstations → stage-2 workstations → … → QI
+# α = depth / workstations.count controls how many workstations are in each
+# stage (α ≈ 1: one per stage / serial; α ≈ 0: many per stage / parallel).
 layout:
-  topology: "parallel"
   flow_capacity:  [50, 200]
   transport_cost: [0.5, 5.0]
+
+# Simulation ——————————————————————————————————————————————————————————
+# Discrete-Time Simulation (DTS) parameters.
+# Tick = one simulated time step; all workstations are evaluated each tick.
+simulation:
+  tick_duration:       0.05   # hours per tick  (~3 minutes real time)
+  buffer_capacity:     10     # max units each non-raw component buffer can hold
+  order_interarrival:  10     # ticks between successive order releases
+  n_ticks:             3000   # hard upper limit on simulation length
+  n_orders:            10     # number of production orders to simulate
 
 # Output ——————————————————————————————————————————————————————————————
 # Relative path → resolved next to this script.
