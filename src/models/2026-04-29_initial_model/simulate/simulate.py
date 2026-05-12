@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import math
 import os
+from collections import defaultdict
 from dataclasses import dataclass, field
 
 import pandas as pd
@@ -144,7 +145,6 @@ def simulate(
     # Stage-1 workstations are fed by Inv; higher-stage workstations are fed by
     # the previous stage.  Averaging over incoming edges gives a fair per-unit
     # transport charge regardless of which upstream workstation supplied the parts.
-    from collections import defaultdict
     _incoming: dict[str, list[float]] = defaultdict(list)
     for e in layout_edges:
         if e.destination not in ("Inv", "QI"):
@@ -372,10 +372,6 @@ def simulate(
                 d for d in demand_queue if not d.assigned and not d.fulfilled
             ]
             for ws in idle_ws:
-                ws_comps = {
-                    cfg["ws"] for cfgs in comp_configs.values()
-                    for cfg in cfgs if cfg["ws"] == ws.ws_id
-                }
                 starved = any(
                     any(cfg["ws"] == ws.ws_id
                         for cfg in comp_configs.get(d.component, []))
@@ -457,19 +453,14 @@ def simulate(
 # ── Script entry point (single run) ─────────────────────────────────────────
 
 if __name__ == "__main__":
-    import sys
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "generate"))
-    from generate import generate_simple_assembly
+    # One insert puts the model root on the path; package imports then work cleanly.
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+    from generate.generate import generate_simple_assembly
+    import utils
 
-    import yaml
-
-    SIM_DIR     = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sim_output")
-    script_dir  = os.path.dirname(os.path.abspath(__file__))
-    config_path = os.path.join(script_dir, "..", "config.yaml")
-
-    with open(config_path) as _f:
-        _cfg = yaml.safe_load(_f)
-    _sim = _cfg.get("simulation", {})
+    SIM_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sim_output")
+    _cfg    = utils.load_config()
+    _sim    = _cfg.get("simulation", {})
 
     print("Generating factory…")
     gen_result = generate_simple_assembly(config_path, export_csv=True)

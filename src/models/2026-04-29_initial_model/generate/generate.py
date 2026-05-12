@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 # Simple Assembly Factory — synthetic data generator.
 # Builds an assembly-line factory from a YAML config and writes CSVs.
-# Install dependencies: pip install pyyaml
 #
-# Run:  python generate.py
+# Run:  python generate.py   (or via the top-level run.py)
 
 import math
 import os
 import random
+import sys
 import csv
 from dataclasses import dataclass
-import yaml
+
+# Add the model root to sys.path so utils (and other packages) are importable
+# whether this module is run directly or imported as part of a package.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+import utils
 
 
 @dataclass
@@ -258,49 +262,42 @@ def generate_simple_assembly(config_path: str, export_csv: bool = True) -> dict:
     Generate a factory from a YAML config file.
     Returns the factory as a dict of dataclass lists.
     When export_csv=True, writes the five CSVs to cfg["output"]["directory"].
+
+    Builds a params dict from the config and delegates to generate_from_params
+    so all factory construction goes through a single code path.
     """
-    with open(config_path) as f:
-        cfg = yaml.safe_load(f)
+    cfg = utils.load_config(config_path)
 
-    seed = cfg["metadata"].get("seed")
-    if seed is not None:
-        random.seed(seed)
+    bom = cfg["bom"]
+    ws  = cfg["workstations"]
+    cc  = cfg["configurations"]
+    lay = cfg["layout"]
 
-    bom  = cfg["bom"]
-    ws   = cfg["workstations"]
-    cc   = cfg["configurations"]
-    lay  = cfg["layout"]
+    params = {
+        "seed":                    cfg["metadata"].get("seed"),
+        "n_products":              bom["n_products"],
+        "depth":                   bom["depth"],
+        "branching":               bom["branching"],
+        "quantity":                bom["quantity"],
+        "sharing_ratio":           bom.get("sharing_ratio", 0.0),
+        "workstations_count":      ws["count"],
+        "producers_per_component": cc["producers_per_component"],
+        "processing_time":         cc["processing_time"],
+        "setup_time":              cc["setup_time"],
+        "setup_cost":              cc["setup_cost"],
+        "operating_cost":          cc["operating_cost"],
+        "flow_capacity":           lay["flow_capacity"],
+        "transport_cost":          lay["transport_cost"],
+    }
 
-    result = _build_factory(
-        n_products    = bom["n_products"],
-        depth         = bom["depth"],
-        branch_min    = bom["branching"][0],
-        branch_max    = bom["branching"][1],
-        qty_min       = bom["quantity"][0],
-        qty_max       = bom["quantity"][1],
-        sharing_ratio = bom.get("sharing_ratio", 0.0),
-        n_ws          = ws["count"],
-        prod_min      = cc["producers_per_component"][0],
-        prod_max      = cc["producers_per_component"][1],
-        pt_r          = cc["processing_time"],
-        st_r          = cc["setup_time"],
-        sc_r          = cc["setup_cost"],
-        oc_r          = cc["operating_cost"],
-        cap_r         = lay["flow_capacity"],
-        cost_r        = lay["transport_cost"],
-    )
-
+    out_dir = None
     if export_csv:
-        rel     = cfg["output"]["directory"]
+        rel        = cfg["output"]["directory"]
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        out_dir = rel if os.path.isabs(rel) else os.path.normpath(
+        out_dir    = rel if os.path.isabs(rel) else os.path.normpath(
             os.path.join(script_dir, rel))
-        _write_csvs(result, out_dir)
-        result["out_dir"] = out_dir
-    else:
-        result["out_dir"] = None
 
-    return result
+    return generate_from_params(params, export_csv=export_csv, out_dir=out_dir)
 
 
 def generate_from_params(params: dict, export_csv: bool = False,
@@ -355,8 +352,10 @@ def generate_from_params(params: dict, export_csv: bool = False,
 # ── Script entry point ─────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    result = generate_simple_assembly(os.path.join(script_dir, "..", "config.yaml"))
+    script_dir  = os.path.dirname(os.path.abspath(__file__))
+    config_path = os.path.normpath(os.path.join(script_dir, "..", "config.yaml"))
+    result = generate_simple_assembly(config_path)
+    print(f"Config:         {config_path}")
     print(f"Components:     {len(result['components'])}")
     print(f"BOM edges:      {len(result['bom_edges'])}")
     print(f"Workstations:   {len(result['workstations'])}")

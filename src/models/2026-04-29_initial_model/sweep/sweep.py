@@ -2,12 +2,12 @@
 # Parameter sweep for the Simple Assembly Factory model.
 #
 # Runs generate + simulate for every combination of the sweep parameters
-# defined in PARAM_GRID. Each output row is tagged with the run's parameters
-# so results can be filtered and grouped during analysis.
+# defined in config.yaml (sweep: section). Each output row is tagged with
+# the run's parameters so results can be filtered and grouped during analysis.
 #
-# Output: sweep_output/{gen_stats,utilization,throughput,costs}.csv
+# Output: sweep_output/{gen_stats,state_summary,utilization,throughput,costs}.csv
 #
-# Run:  python sweep.py
+# Run:  python sweep.py   (or python -m sweep.sweep from the model root)
 # Dependencies: pip install pyyaml pandas
 
 import os
@@ -15,19 +15,14 @@ import sys
 import itertools
 
 import pandas as pd
-import yaml
 
-# ── Imports from sibling packages ─────────────────────────────────────────────
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "generate"))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "simulate"))
+# ── Imports from the model root ────────────────────────────────────────────────
+# One insert puts the model root on the path; package imports then work cleanly.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from generate import generate_from_params  # noqa: E402
-from simulate import simulate              # noqa: E402
-
-# ── Load config ────────────────────────────────────────────────────────────────
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "config.yaml")
-with open(CONFIG_PATH) as _f:
-    _cfg = yaml.safe_load(_f)
+from generate.generate import generate_from_params  # noqa: E402
+from simulate.simulate import simulate              # noqa: E402
+import utils                                        # noqa: E402
 
 # ── Parameter expansion helper ─────────────────────────────────────────────────
 def _expand(val) -> list:
@@ -56,41 +51,43 @@ def _expand(val) -> list:
     else:
         return [val]
 
-# ── Sweep parameter grid (from config.yaml → sweep:) ──────────────────────────
-# Each entry is expanded to a list using _expand(); every combination is tested.
-PARAM_GRID: dict[str, list] = {k: _expand(v) for k, v in _cfg["sweep"].items()}
-
-# ── Fixed parameters (from config.yaml) ───────────────────────────────────────
-# Held constant across all runs; randomness within ranges gives natural variation.
-FIXED_PARAMS: dict = {
-    "branching":               _cfg["bom"]["branching"],
-    "quantity":                _cfg["bom"]["quantity"],
-    "producers_per_component": _cfg["configurations"]["producers_per_component"],
-    "processing_time":         _cfg["configurations"]["processing_time"],
-    "setup_time":              _cfg["configurations"]["setup_time"],
-    "setup_cost":              _cfg["configurations"]["setup_cost"],
-    "operating_cost":          _cfg["configurations"]["operating_cost"],
-    "flow_capacity":           _cfg["layout"]["flow_capacity"],
-    "transport_cost":          _cfg["layout"]["transport_cost"],
-    "seed":                    _cfg["metadata"].get("seed"),
-}
-
-# ── Simulation parameters (from config.yaml → simulation:) ────────────────────
-SIM_PARAMS: dict = {
-    "n_orders":           _cfg["simulation"]["n_orders"],
-    "tick_duration":      _cfg["simulation"]["tick_duration"],
-    "buffer_capacity":    _cfg["simulation"]["buffer_capacity"],
-    "order_interarrival": _cfg["simulation"]["order_interarrival"],
-    "n_ticks":            _cfg["simulation"]["n_ticks"],
-}
-
-# ── Output directory ───────────────────────────────────────────────────────────
-SWEEP_DIR: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sweep_output")
-
 # ── Run sweep ──────────────────────────────────────────────────────────────────
 def main():
-    sweep_keys   = list(PARAM_GRID.keys())
-    sweep_values = list(PARAM_GRID.values())
+    cfg = utils.load_config()
+
+    # ── Sweep parameter grid (from config.yaml → sweep:) ──────────────────────
+    # Each entry is expanded to a list using _expand(); every combination is tested.
+    param_grid: dict[str, list] = {k: _expand(v) for k, v in cfg["sweep"].items()}
+
+    # ── Fixed parameters (from config.yaml) ───────────────────────────────────
+    # Held constant across all runs; randomness within ranges gives natural variation.
+    fixed_params: dict = {
+        "branching":               cfg["bom"]["branching"],
+        "quantity":                cfg["bom"]["quantity"],
+        "producers_per_component": cfg["configurations"]["producers_per_component"],
+        "processing_time":         cfg["configurations"]["processing_time"],
+        "setup_time":              cfg["configurations"]["setup_time"],
+        "setup_cost":              cfg["configurations"]["setup_cost"],
+        "operating_cost":          cfg["configurations"]["operating_cost"],
+        "flow_capacity":           cfg["layout"]["flow_capacity"],
+        "transport_cost":          cfg["layout"]["transport_cost"],
+        "seed":                    cfg["metadata"].get("seed"),
+    }
+
+    # ── Simulation parameters (from config.yaml → simulation:) ────────────────
+    sim_params: dict = {
+        "n_orders":           cfg["simulation"]["n_orders"],
+        "tick_duration":      cfg["simulation"]["tick_duration"],
+        "buffer_capacity":    cfg["simulation"]["buffer_capacity"],
+        "order_interarrival": cfg["simulation"]["order_interarrival"],
+        "n_ticks":            cfg["simulation"]["n_ticks"],
+    }
+
+    # ── Output directory ───────────────────────────────────────────────────────
+    sweep_dir: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sweep_output")
+
+    sweep_keys   = list(param_grid.keys())
+    sweep_values = list(param_grid.values())
     all_combos   = list(itertools.product(*sweep_values))
 
     # α = depth / workstations_count must be ≤ 1: every BOM stage needs at
@@ -106,7 +103,7 @@ def main():
     combinations = [c for c in all_combos if _valid(c)]
     total_runs   = len(combinations)
 
-    print(f"Starting sweep: {total_runs} combinations × {SIM_PARAMS['n_orders']} orders each")
+    print(f"Starting sweep: {total_runs} combinations × {sim_params['n_orders']} orders each")
     print(f"Sweep parameters: {', '.join(sweep_keys)}\n")
 
     all_gen_stats:    list[dict]          = []
@@ -117,7 +114,7 @@ def main():
 
     for run_id, combo in enumerate(combinations, start=1):
         sweep_params = dict(zip(sweep_keys, combo))
-        params       = {**FIXED_PARAMS, **sweep_params}
+        params       = {**fixed_params, **sweep_params}
 
         # Tag columns prepended to every output row for this run.
         # Alpha (α = depth / workstations_count) is a derived topology metric:
@@ -139,11 +136,11 @@ def main():
 
             sim_result = simulate(
                 gen_result,
-                n_orders           = SIM_PARAMS["n_orders"],
-                tick_duration      = SIM_PARAMS["tick_duration"],
-                buffer_capacity    = SIM_PARAMS["buffer_capacity"],
-                order_interarrival = SIM_PARAMS["order_interarrival"],
-                n_ticks            = SIM_PARAMS["n_ticks"],
+                n_orders           = sim_params["n_orders"],
+                tick_duration      = sim_params["tick_duration"],
+                buffer_capacity    = sim_params["buffer_capacity"],
+                order_interarrival = sim_params["order_interarrival"],
+                n_ticks            = sim_params["n_ticks"],
                 log_buffers        = False,   # skip per-tick buffer log in sweep
             )
         except Exception as e:
@@ -191,7 +188,7 @@ def main():
             print(f"  Progress: {run_id}/{total_runs} runs complete")
 
     # ── Write combined CSVs ────────────────────────────────────────────────────
-    os.makedirs(SWEEP_DIR, exist_ok=True)
+    os.makedirs(sweep_dir, exist_ok=True)
 
     outputs = {
         "gen_stats":     [pd.DataFrame(all_gen_stats)]   if all_gen_stats   else [],
@@ -205,11 +202,11 @@ def main():
         if not frames:
             print(f"  [WARN] No data for {name}.csv — all runs may have failed.")
             continue
-        path = os.path.join(SWEEP_DIR, f"{name}.csv")
+        path = os.path.join(sweep_dir, f"{name}.csv")
         pd.concat(frames, ignore_index=True).to_csv(path, index=False)
         print(f"  Wrote {path}")
 
-    print(f"\nSweep complete — results in {SWEEP_DIR}/")
+    print(f"\nSweep complete — results in {sweep_dir}/")
 
 
 if __name__ == "__main__":
