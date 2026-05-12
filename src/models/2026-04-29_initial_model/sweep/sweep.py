@@ -15,47 +15,73 @@ import sys
 import itertools
 
 import pandas as pd
+import yaml
 
 # ── Imports from sibling packages ─────────────────────────────────────────────
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "generate"))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "simulate"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "generate"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "simulate"))
 
 from generate import generate_from_params  # noqa: E402
 from simulate import simulate              # noqa: E402
 
-# ── Sweep parameter grid ───────────────────────────────────────────────────────
-# These are the structural parameters we want to study.
-# All combinations are tested (162 total).
-PARAM_GRID: dict[str, list] = {
-    "n_products":         [1, 2, 4],
-    "depth":              [1, 2, 3],
-    "workstations_count": [2, 4, 8],
-    "sharing_ratio":      [0.0, 0.5, 1.0],
-}
+# ── Load config ────────────────────────────────────────────────────────────────
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "config.yaml")
+with open(CONFIG_PATH) as _f:
+    _cfg = yaml.safe_load(_f)
 
-# ── Fixed parameters ───────────────────────────────────────────────────────────
-# Factory structure parameters — held constant across all runs.
-# Randomness within ranges introduces natural variation inside each run.
+# ── Parameter expansion helper ─────────────────────────────────────────────────
+def _expand(val) -> list:
+    """
+    Convert a sweep parameter value from config.yaml into a flat list of values.
+
+    Three formats are supported:
+      fixed   scalar        depth: 2
+              → [2]
+
+      list    explicit      depth: [1, 2, 3]
+              → [1, 2, 3]
+
+      range   min/max/step  workstations_count: {min: 2, max: 8, step: 2}
+              → [2, 4, 6, 8]
+    """
+    if isinstance(val, dict):
+        start, stop, step = val["min"], val["max"], val["step"]
+        result, v = [], start
+        while v <= stop + step * 1e-9:   # small epsilon handles float rounding
+            result.append(round(v, 10))
+            v += step
+        return result
+    elif isinstance(val, list):
+        return val
+    else:
+        return [val]
+
+# ── Sweep parameter grid (from config.yaml → sweep:) ──────────────────────────
+# Each entry is expanded to a list using _expand(); every combination is tested.
+PARAM_GRID: dict[str, list] = {k: _expand(v) for k, v in _cfg["sweep"].items()}
+
+# ── Fixed parameters (from config.yaml) ───────────────────────────────────────
+# Held constant across all runs; randomness within ranges gives natural variation.
 FIXED_PARAMS: dict = {
-    "branching":               [2, 3],
-    "quantity":                [1, 3],
-    "producers_per_component": [1, 2],
-    "processing_time":         [0.1, 0.5],
-    "setup_time":              [0.5, 2.0],
-    "setup_cost":              [50,  300],
-    "operating_cost":          [2,   15],
-    "flow_capacity":           [50,  200],
-    "transport_cost":          [0.5, 5.0],
-    "seed":                    42,
+    "branching":               _cfg["bom"]["branching"],
+    "quantity":                _cfg["bom"]["quantity"],
+    "producers_per_component": _cfg["configurations"]["producers_per_component"],
+    "processing_time":         _cfg["configurations"]["processing_time"],
+    "setup_time":              _cfg["configurations"]["setup_time"],
+    "setup_cost":              _cfg["configurations"]["setup_cost"],
+    "operating_cost":          _cfg["configurations"]["operating_cost"],
+    "flow_capacity":           _cfg["layout"]["flow_capacity"],
+    "transport_cost":          _cfg["layout"]["transport_cost"],
+    "seed":                    _cfg["metadata"].get("seed"),
 }
 
-# DTS simulation parameters — same for every run.
+# ── Simulation parameters (from config.yaml → simulation:) ────────────────────
 SIM_PARAMS: dict = {
-    "n_orders":            10,
-    "tick_duration":       0.05,   # hours per tick (~3 min)
-    "buffer_capacity":     20,     # max units per non-raw component buffer
-    "order_interarrival":  10,     # ticks between order releases
-    "n_ticks":             3000,   # hard simulation limit
+    "n_orders":           _cfg["simulation"]["n_orders"],
+    "tick_duration":      _cfg["simulation"]["tick_duration"],
+    "buffer_capacity":    _cfg["simulation"]["buffer_capacity"],
+    "order_interarrival": _cfg["simulation"]["order_interarrival"],
+    "n_ticks":            _cfg["simulation"]["n_ticks"],
 }
 
 # ── Output directory ───────────────────────────────────────────────────────────
@@ -65,7 +91,19 @@ SWEEP_DIR: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sweep
 def main():
     sweep_keys   = list(PARAM_GRID.keys())
     sweep_values = list(PARAM_GRID.values())
-    combinations = list(itertools.product(*sweep_values))
+    all_combos   = list(itertools.product(*sweep_values))
+
+    # α = depth / workstations_count must be ≤ 1: every BOM stage needs at
+    # least one workstation, so depth cannot exceed workstations_count.
+    def _valid(combo: tuple) -> bool:
+        params = dict(zip(sweep_keys, combo))
+        depth  = params.get("depth")
+        n_ws   = params.get("workstations_count")
+        if depth is not None and n_ws is not None:
+            return depth <= n_ws
+        return True
+
+    combinations = [c for c in all_combos if _valid(c)]
     total_runs   = len(combinations)
 
     print(f"Starting sweep: {total_runs} combinations × {SIM_PARAMS['n_orders']} orders each")
