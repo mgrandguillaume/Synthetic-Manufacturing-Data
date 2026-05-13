@@ -33,12 +33,13 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    cfg = utils.load_config()
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.yaml")
+    cfg = utils.load_config(config_path)
     sim = cfg.get("simulation", {})
 
     # ── Generate ──────────────────────────────────────────────────────────────
     print("Generating factory…")
-    gen_result = generate_simple_assembly(CONFIG_PATH, export_csv=True)
+    gen_result = generate_simple_assembly(config_path, export_csv=True)
     print(
         f"  {len(gen_result['components'])} components, "
         f"{len(gen_result['configurations'])} configurations, "
@@ -73,7 +74,7 @@ def main() -> None:
 
     # ── Visualise ─────────────────────────────────────────────────────────────
     if not args.no_viz:
-        from visualize_sim import show
+        from simulate.visualize_sim import show
         show(SIM_DIR)
 
 

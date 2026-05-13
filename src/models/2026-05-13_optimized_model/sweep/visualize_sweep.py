@@ -152,27 +152,26 @@ def show(sweep_dir: str = _DEFAULT_SWEEP_DIR) -> None:
     )
 
     # ── Legend positions ───────────────────────────────────────────────────────
-    # 6 rows × 2 cols, vertical_spacing=0.10
-    # Row tops (paper y): 1.00, 0.817, 0.633, 0.450, 0.267, 0.083
+    # 5 rows × 2 cols, vertical_spacing=0.10
+    # subplot_height = (1 - 4*0.10) / 5 = 0.12
+    # Row tops (paper y): 1.00, 0.78, 0.56, 0.34, 0.12
     # Col right edges:    col1≈0.44, col2≈0.99
     _L = {
         "legend":   _legend_style(0.44, 0.97, "products"),   # row 1, col 1
         "legend2":  _legend_style(0.99, 0.97, "depth"),      # row 1, col 2
-        "legend3":  _legend_style(0.44, 0.80, "products"),   # row 2, col 1
-        "legend4":  _legend_style(0.99, 0.80, "depth"),      # row 2, col 2
-        "legend5":  _legend_style(0.44, 0.61, "products"),   # row 3, col 1
-        "legend6":  _legend_style(0.99, 0.61, "sharing"),    # row 3, col 2
-        "legend7":  _legend_style(0.44, 0.42, "products"),   # row 4, col 1
-        "legend8":  _legend_style(0.99, 0.42, "depth"),      # row 4, col 2
-        "legend9":  _legend_style(0.44, 0.24, "cost type"),  # row 5, col 1
-        "legend10": _legend_style(0.99, 0.24, "depth"),      # row 5, col 2
-        "legend11": _legend_style(0.44, 0.06, "state"),      # row 6, col 1
-        "legend12": _legend_style(0.99, 0.06, "depth"),      # row 6, col 2
+        "legend3":  _legend_style(0.44, 0.75, "products"),   # row 2, col 1
+        "legend4":  _legend_style(0.99, 0.75, "depth"),      # row 2, col 2
+        "legend5":  _legend_style(0.44, 0.53, "products"),   # row 3, col 1
+        "legend6":  _legend_style(0.99, 0.53, "depth"),      # row 3, col 2
+        "legend7":  _legend_style(0.44, 0.31, "cost type"),  # row 4, col 1
+        "legend8":  _legend_style(0.99, 0.31, "depth"),      # row 4, col 2
+        "legend9":  _legend_style(0.44, 0.09, "state"),      # row 5, col 1
+        "legend10": _legend_style(0.99, 0.09, "depth"),      # row 5, col 2
     }
 
     # ── Build subplots ─────────────────────────────────────────────────────────
     fig = make_subplots(
-        rows=6, cols=2,
+        rows=5, cols=2,
         subplot_titles=[
             # Row 1 — Generation Graphs
             "Component Count vs BOM Depth",
@@ -181,26 +180,23 @@ def show(sweep_dir: str = _DEFAULT_SWEEP_DIR) -> None:
             "Raw Material Count vs BOM Depth",
             "Makespan vs Alpha",
             # Row 3 — Simulation Graphs
-            "Mean Busy Utilisation vs Sharing Ratio",
-            "Mean Lead Time vs n_products",
-            # Row 4
             "Total Cost vs BOM Depth",
             "Setup Time Fraction vs Sharing Ratio",
-            # Row 5
+            # Row 4
             "Cost Share vs Sharing Ratio",
             "Starved % vs Alpha",
-            # Row 6
+            # Row 5
             "Mean State % over Iterations  (sweep-wide avg)",
             "% Working Machines vs Alpha",
         ],
-        specs=[[{}, {}]] * 6,
+        specs=[[{}, {}]] * 5,
         vertical_spacing=0.10,
         horizontal_spacing=0.10,
     )
 
     # ── Section header annotations ─────────────────────────────────────────────
     # "Generation Graphs" sits above row 1 (y > 1.0 paper).
-    # "Simulation Graphs" sits in the gap between rows 2 and 3 (y ≈ 0.68).
+    # "Simulation Graphs" sits in the gap between rows 2 and 3 (y ≈ 0.61).
     SECTION_FONT = dict(color=theme.TEXT, size=13)
 
     fig.add_annotation(
@@ -209,7 +205,7 @@ def show(sweep_dir: str = _DEFAULT_SWEEP_DIR) -> None:
         showarrow=False, font=SECTION_FONT, align="center",
     )
     fig.add_annotation(
-        x=0.5, y=0.68, xref="paper", yref="paper",
+        x=0.5, y=0.61, xref="paper", yref="paper",
         text="<b>── Simulation Graphs ──────────────────────────────────────────</b>",
         showarrow=False, font=SECTION_FONT, align="center",
     )
@@ -252,44 +248,25 @@ def show(sweep_dir: str = _DEFAULT_SWEEP_DIR) -> None:
             hovertemplate=f"depth={s['label']}<br>α: %{{x:.3f}}<br>Makespan: %{{y:.2f}} h<extra></extra>",
         ), row=2, col=2)
 
-    # ── Row 3 — Busy % vs sharing ratio | Lead time vs n_products ────────────
-    for i, s in enumerate(_group_mean(sim_metrics, "sharing_ratio", "MeanBusyPct", "n_products")):
-        fig.add_trace(go.Scatter(
-            x=s["x"], y=s["y"], mode="lines+markers", name=s["label"],
-            line=dict(color=theme.palette(i), width=2),
-            marker=dict(size=7, color=theme.palette(i)),
-            legend="legend5",
-            hovertemplate=f"products={s['label']}<br>Sharing: %{{x}}<br>Busy: %{{y:.1f}}%<extra></extra>",
-        ), row=3, col=1)
-
-    for i, s in enumerate(_group_mean(sim_metrics, "n_products", "MeanLeadTime", "sharing_ratio")):
-        fig.add_trace(go.Scatter(
-            x=s["x"], y=s["y"], mode="lines+markers", name=s["label"],
-            line=dict(color=theme.palette(i), width=2, dash="dot"),
-            marker=dict(size=7, color=theme.palette(i)),
-            legend="legend6",
-            hovertemplate=f"sharing={s['label']}<br>Products: %{{x}}<br>Lead time: %{{y:.2f}} h<extra></extra>",
-        ), row=3, col=2)
-
-    # ── Row 4 — Total cost vs depth | Setup fraction vs sharing ratio ──────────
+    # ── Row 3 — Total cost vs depth | Setup fraction vs sharing ratio ──────────
     for i, s in enumerate(_group_mean(sim_metrics, "depth", "TotalCost", "n_products")):
         fig.add_trace(go.Bar(
             x=s["x"], y=s["y"], name=s["label"],
             marker_color=theme.palette(i), marker_line_width=0, opacity=0.85,
-            legend="legend7",
+            legend="legend5",
             hovertemplate=f"products={s['label']}<br>Depth: %{{x}}<br>Cost: $%{{y:.0f}}<extra></extra>",
-        ), row=4, col=1)
+        ), row=3, col=1)
 
     for i, s in enumerate(_group_mean(sim_metrics, "sharing_ratio", "MeanSetupPct", "depth")):
         fig.add_trace(go.Scatter(
             x=s["x"], y=s["y"], mode="lines+markers", name=s["label"],
             line=dict(color=theme.palette(i), width=2),
             marker=dict(size=7, color=theme.palette(i)),
-            legend="legend8",
+            legend="legend6",
             hovertemplate=f"depth={s['label']}<br>Sharing: %{{x}}<br>Setup: %{{y:.1f}}%<extra></extra>",
-        ), row=4, col=2)
+        ), row=3, col=2)
 
-    # ── Row 5 — Cost share vs sharing ratio | Starved % vs alpha ─────────────
+    # ── Row 4 — Cost share vs sharing ratio | Starved % vs alpha ─────────────
     for label, col, color in _COST_SHARE_SERIES:
         fig.add_trace(go.Scatter(
             x=cost_share_by_ratio["sharing_ratio"].tolist(),
@@ -297,20 +274,20 @@ def show(sweep_dir: str = _DEFAULT_SWEEP_DIR) -> None:
             mode="lines+markers", name=label,
             line=dict(color=color, width=2),
             marker=dict(size=7, color=color),
-            legend="legend9",
+            legend="legend7",
             hovertemplate=f"<b>{label}</b><br>Sharing: %{{x}}<br>Share: %{{y:.1f}}%<extra></extra>",
-        ), row=5, col=1)
+        ), row=4, col=1)
 
     for i, s in enumerate(_group_mean(sim_metrics, "alpha", "MeanStarvedPct", "depth")):
         fig.add_trace(go.Scatter(
             x=s["x"], y=s["y"], mode="lines+markers", name=s["label"],
             line=dict(color=theme.palette(i), width=2, dash="dash"),
             marker=dict(size=7, color=theme.palette(i)),
-            legend="legend10",
+            legend="legend8",
             hovertemplate=f"depth={s['label']}<br>α: %{{x:.3f}}<br>Starved: %{{y:.1f}}%<extra></extra>",
-        ), row=5, col=2)
+        ), row=4, col=2)
 
-    # ── Row 6 — CLEMATIS sweep-wide avg | % Working vs alpha ──────────────────
+    # ── Row 5 — CLEMATIS sweep-wide avg | % Working vs alpha ──────────────────
     for state_col, state_label, state_color in [
         ("WorkingPct", "Working", theme.STATE_COLORS["processing"]),
         ("StarvedPct", "Starved", theme.STATE_COLORS["starved"]),
@@ -322,18 +299,18 @@ def show(sweep_dir: str = _DEFAULT_SWEEP_DIR) -> None:
             mode="lines", name=state_label,
             legendgroup=f"state_{state_col}",
             line=dict(color=state_color, width=2),
-            legend="legend11",
+            legend="legend9",
             hovertemplate=f"<b>{state_label}</b><br>Tick: %{{x}}<br>%{{y:.1f}}% of machines<extra></extra>",
-        ), row=6, col=1)
+        ), row=5, col=1)
 
     for i, s in enumerate(_group_mean(sim_metrics, "alpha", "MeanBusyPct", "depth")):
         fig.add_trace(go.Scatter(
             x=s["x"], y=s["y"], mode="lines+markers", name=s["label"],
             line=dict(color=theme.palette(i), width=2.5),
             marker=dict(size=8, color=theme.palette(i)),
-            legend="legend12",
+            legend="legend10",
             hovertemplate=f"depth={s['label']}<br>α: %{{x:.3f}}<br>Working: %{{y:.1f}}%<extra></extra>",
-        ), row=6, col=2)
+        ), row=5, col=2)
 
     # ── Global styling ─────────────────────────────────────────────────────────
     fig.update_layout(
@@ -346,7 +323,7 @@ def show(sweep_dir: str = _DEFAULT_SWEEP_DIR) -> None:
             font=dict(size=20, color=theme.TEXT),
             x=0.02, y=0.99,
         ),
-        height=2000,
+        height=1700,
         margin=dict(l=60, r=40, t=120, b=40),
         **{"legend" + ("" if k == 0 else str(k + 1)): v
            for k, v in enumerate(_L.values())},
@@ -367,27 +344,23 @@ def show(sweep_dir: str = _DEFAULT_SWEEP_DIR) -> None:
     fig.update_xaxes(title_text="Workstations",             title_font=dict(color=theme.SUBTEXT), row=1, col=2)
     fig.update_xaxes(title_text="BOM depth",                title_font=dict(color=theme.SUBTEXT), row=2, col=1)
     fig.update_xaxes(title_text="α = depth / workstations", title_font=dict(color=theme.SUBTEXT), row=2, col=2)
-    fig.update_xaxes(title_text="Sharing ratio",            title_font=dict(color=theme.SUBTEXT), row=3, col=1)
-    fig.update_xaxes(title_text="n_products",               title_font=dict(color=theme.SUBTEXT), row=3, col=2)
-    fig.update_xaxes(title_text="BOM depth",                title_font=dict(color=theme.SUBTEXT), row=4, col=1)
-    fig.update_xaxes(title_text="Sharing ratio",            title_font=dict(color=theme.SUBTEXT), row=4, col=2)
-    fig.update_xaxes(title_text="Sharing ratio",            title_font=dict(color=theme.SUBTEXT), row=5, col=1)
+    fig.update_xaxes(title_text="BOM depth",                title_font=dict(color=theme.SUBTEXT), row=3, col=1)
+    fig.update_xaxes(title_text="Sharing ratio",            title_font=dict(color=theme.SUBTEXT), row=3, col=2)
+    fig.update_xaxes(title_text="Sharing ratio",            title_font=dict(color=theme.SUBTEXT), row=4, col=1)
+    fig.update_xaxes(title_text="α = depth / workstations", title_font=dict(color=theme.SUBTEXT), row=4, col=2)
+    fig.update_xaxes(title_text="Iteration (tick)",         title_font=dict(color=theme.SUBTEXT), row=5, col=1)
     fig.update_xaxes(title_text="α = depth / workstations", title_font=dict(color=theme.SUBTEXT), row=5, col=2)
-    fig.update_xaxes(title_text="Iteration (tick)",         title_font=dict(color=theme.SUBTEXT), row=6, col=1)
-    fig.update_xaxes(title_text="α = depth / workstations", title_font=dict(color=theme.SUBTEXT), row=6, col=2)
 
     fig.update_yaxes(title_text="Components (non-raw)", title_font=dict(color=theme.SUBTEXT), row=1, col=1)
     fig.update_yaxes(title_text="Configurations",       title_font=dict(color=theme.SUBTEXT), row=1, col=2)
     fig.update_yaxes(title_text="Raw materials",        title_font=dict(color=theme.SUBTEXT), row=2, col=1)
     fig.update_yaxes(title_text="Makespan (h)",         title_font=dict(color=theme.SUBTEXT), row=2, col=2)
-    fig.update_yaxes(title_text="Busy (%)",             title_font=dict(color=theme.SUBTEXT), row=3, col=1)
-    fig.update_yaxes(title_text="Lead time (h)",        title_font=dict(color=theme.SUBTEXT), row=3, col=2)
-    fig.update_yaxes(title_text="Total cost ($)",       title_font=dict(color=theme.SUBTEXT), row=4, col=1)
-    fig.update_yaxes(title_text="Setup time (%)",       title_font=dict(color=theme.SUBTEXT), row=4, col=2)
-    fig.update_yaxes(title_text="Cost share (%)",       title_font=dict(color=theme.SUBTEXT), row=5, col=1)
-    fig.update_yaxes(title_text="Starved (%)",          title_font=dict(color=theme.SUBTEXT), row=5, col=2)
-    fig.update_yaxes(title_text="% of machines",        title_font=dict(color=theme.SUBTEXT), row=6, col=1)
-    fig.update_yaxes(title_text="Working (%)",          title_font=dict(color=theme.SUBTEXT), row=6, col=2)
+    fig.update_yaxes(title_text="Total cost ($)",       title_font=dict(color=theme.SUBTEXT), row=3, col=1)
+    fig.update_yaxes(title_text="Setup time (%)",       title_font=dict(color=theme.SUBTEXT), row=3, col=2)
+    fig.update_yaxes(title_text="Cost share (%)",       title_font=dict(color=theme.SUBTEXT), row=4, col=1)
+    fig.update_yaxes(title_text="Starved (%)",          title_font=dict(color=theme.SUBTEXT), row=4, col=2)
+    fig.update_yaxes(title_text="% of machines",        title_font=dict(color=theme.SUBTEXT), row=5, col=1)
+    fig.update_yaxes(title_text="Working (%)",          title_font=dict(color=theme.SUBTEXT), row=5, col=2)
 
     fig.show()
 

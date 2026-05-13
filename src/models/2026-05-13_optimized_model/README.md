@@ -156,7 +156,7 @@ The two configurable layout parameters control edge properties:
 ## Simulate
 
 **Script:** `simulate/simulate.py`  
-**Dependency:** `pip install pandas pyyaml`  
+**Dependency:** `pip install pandas pyyaml numba`  
 **Run:** `python simulate/simulate.py`
 
 The simulator reads the five CSVs produced by Generate and replays a series of production orders through the factory. It uses a **Discrete-Time Simulation (DTS)** approach: time advances in fixed steps called *ticks*, and every workstation is evaluated simultaneously at each tick. This allows multiple workstations to produce different components at the same time (concurrency), and captures two failure modes that a purely sequential scheduler cannot see:
@@ -165,6 +165,48 @@ The simulator reads the five CSVs produced by Generate and replays a series of p
 - **Starvation** — a workstation is ready to start a job but the input components it needs have not yet arrived in the buffer; it waits until upstream production catches up.
 
 All simulation parameters (`tick_duration`, `buffer_capacity`, `order_interarrival`, `n_ticks`, `n_orders`) are set in the `simulation:` section of `config.yaml`. Results are written to `simulate/sim_output/`.
+
+### Implementation
+
+This model replaces the initial model's pure-Python simulation with a **NumPy + Numba** implementation that compiles the tick loop to machine code. The public `simulate()` function has an identical signature and return value — `run.py`, `sweep.py`, and all visualisations are unchanged.
+
+The simulation runs in three phases:
+
+**Phase 1 — Pre-processing (Python)**
+
+All factory objects (workstations, configurations, BOM edges, layout) are converted from Python dataclasses and string-keyed dictionaries into flat NumPy arrays before the tick loop starts. Every string ID (component, workstation) is replaced by an integer index so the compiled loop can use fast array indexing instead of dictionary lookups.
+
+The key data structures are:
+
+| Structure | Type | Description |
+|---|---|---|
+| `ws_state[n_ws]` | `int8` | Current state of each workstation (0=idle … 4=starved) |
+| `ws_ticks_left[n_ws]` | `int32` | Remaining ticks on the active job |
+| `ws_current_comp[n_ws]` | `int32` | Index of the last component produced (−1 = none) |
+| `capable[n_ws, n_comps]` | `bool` | Whether workstation *i* can produce component *j* |
+| `proc_time_m[n_ws, n_comps]` | `float64` | Processing time (hours per unit) per workstation–component pair |
+| `setup_time_m[n_ws, n_comps]` | `float64` | Changeover time (hours) per workstation–component pair |
+| `stock[n_comps]` | `int32` | Current buffer stock for each component |
+
+The BOM is stored in **CSR (Compressed Sparse Row)** format — the same format used in sparse matrix libraries — so that looking up the inputs of any component is a simple integer range lookup rather than a dictionary access:
+
+```
+bom_ptr[ci] : bom_ptr[ci+1]  →  range of indices into bom_inputs / bom_qtys
+```
+
+BOM explosions for each product are also pre-computed in Python before the loop starts, so that releasing an order inside the Numba loop only requires copying a fixed slice of pre-computed arrays rather than performing recursive BOM traversal.
+
+**Phase 2 — Tick loop (Numba `@njit`)**
+
+The core tick loop is extracted into a standalone function decorated with `@numba.njit(cache=True)`. Numba compiles this function to native machine code via LLVM on the first call (approximately 1–2 seconds), then caches the compiled binary to disk. Every subsequent call — including all runs in a parameter sweep — uses the cached binary with no recompilation cost.
+
+Inside the compiled function there are no Python objects, no dictionaries, no strings, and no Pandas. Every operation is integer or floating-point arithmetic on NumPy arrays. The sequential parts of the loop (demand assignment, starvation detection) remain loops, but each iteration is executed at near-C speed rather than interpreted Python speed.
+
+All output is written into pre-allocated arrays (`state_log`, `tp_log`, `buf_log`) rather than appended to Python lists. This avoids memory allocation overhead inside the hot loop.
+
+**Phase 3 — Post-processing (Python + Pandas)**
+
+After the tick loop returns, the raw output arrays are converted back to the same five Pandas DataFrames that the initial model produces. This step runs in Python and is not compiled, but it executes only once per simulation run and scales with `actual_ticks × n_workstations`.
 
 ### What it does
 
