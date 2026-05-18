@@ -1,0 +1,88 @@
+# Simple Assembly Factory — input parameters
+#
+# Generates a small synthetic factory where every workstation is an assembly
+# station. Raw materials come from :Inv, finished products go to :QI.
+#
+# BOM tree:  raw materials (level 0) → intermediates (1..depth-1) → products (level=depth)
+# Every component with level > 0 (intermediate OR product) gets at least one
+# producing configuration on some assembly workstation.
+
+metadata:
+  name: "simple_assembly_factory"
+  seed: 42                      # null for non-reproducible
+
+# Bill of materials —————————————————————————————————————————————————
+bom:
+  n_products: 2
+  depth: 2                      # 2 ⇒ raw → intermediate → product
+  branching: [2, 3]             # children per parent (uniform random in range)
+  quantity: [1, 3]              # qty on each BOM edge
+  sharing_ratio: 0.3            # P(reuse existing component at same level)
+
+# Workstations —————————————————————————————————————————————————————
+# All workstations are assembly. :Inv (source) and :QI (sink) added automatically.
+workstations:
+  count: 4
+
+# Configurations (workstation × component capability) ————————————————
+configurations:
+  producers_per_component: [1, 2]   # clamped to ≤ workstations.count
+  processing_time: [0.1, 0.5]       # hours per unit
+  setup_time:      [0.5, 2.0]       # hours per setup
+  setup_cost:      [50, 300]        # cost per setup
+  operating_cost:  [2, 15]          # cost per unit produced
+
+# Layout ——————————————————————————————————————————————————————————————
+# The layout graph is derived automatically from the stage assignment:
+#   Inv → stage-1 workstations → stage-2 workstations → … → QI
+# α = depth / workstations.count controls how many workstations are in each
+# stage (α ≈ 1: one per stage / serial; α ≈ 0: many per stage / parallel).
+layout:
+  flow_capacity:  [50, 200]
+  transport_cost: [0.5, 5.0]
+
+# Simulation ——————————————————————————————————————————————————————————
+# Discrete-Time Simulation (DTS) parameters.
+# Tick = one simulated time step; all workstations are evaluated each tick.
+simulation:
+  tick_duration:       0.05   # hours per tick  (~3 minutes real time)
+  buffer_capacity:     10     # max units each non-raw component buffer can hold
+  order_interarrival:  10     # ticks between successive order releases
+  n_ticks:             3000   # hard upper limit on simulation length
+  n_orders:            10     # number of production orders to simulate
+
+# Machine failures ————————————————————————————————————————————————————
+# When enabled, each workstation is assigned a failure rate sampled uniformly
+# from [failure_rate[0], failure_rate[1]] (failures per simulated hour).
+# On every tick, P(failure) = tick_duration × failure_rate.
+# When a failure occurs the workstation enters a "failed" state for a repair
+# duration sampled from [mttr[0], mttr[1]] hours (MTTR = mean time to repair).
+# A repair cost is also sampled and charged per failure event.
+# If the workstation was mid-job when it failed, its BOM inputs are returned
+# to stock and the demand item is re-queued.
+failures:
+  enabled:         true          # true / false
+  weibull_beta:   [1.5,  3.0]   # Weibull shape β per workstation (β > 1 = wear-out)
+  weibull_lambda: [20,   100]   # Weibull scale λ per workstation (characteristic life, hours)
+  mttr:           [0.5,  4.0]   # repair duration per failure event (hours)
+  repair_cost:    [100,  500]   # cost charged per failure event
+
+# Sweep ———————————————————————————————————————————————————————————————
+# Parameter grid for sweep/sweep.py. Every combination of the expanded
+# values is tested. Three formats are supported per parameter:
+#
+#   fixed   scalar          n_products: 2
+#   list    explicit        depth: [1, 2, 3]
+#   range   min/max/step    workstations_count: {min: 2, max: 8, step: 2}
+#
+sweep:
+  n_products:         5
+  depth:              {min: 1, max: 10, step: 1}
+  workstations_count: {min: 1, max: 20, step: 1}   # → [1, 2, ..., 19, 20]
+  sharing_ratio:      {min: 0.0, max: 1.0, step: 0.1}  # → [0.0, 0.5, 1.0]
+
+# Output ——————————————————————————————————————————————————————————————
+# Relative path → resolved next to this script.
+# Absolute path → used as-is (e.g. "C:/data/factory" or "/tmp/factory").
+output:
+  directory: "gen_output"

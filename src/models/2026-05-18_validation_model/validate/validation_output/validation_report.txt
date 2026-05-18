@@ -1,0 +1,48 @@
+────────────────────────────────────────────────────────────────────────
+  Validation Report — Assembly Factory Model
+  Generated: 2026-05-18 11:06:06
+────────────────────────────────────────────────────────────────────────
+
+  1. Conservation Laws  (must never fail)
+
+  [PASS]  time_balance
+         All workstations: state hours sum = 2.2500 h (actual_ticks=45, tick_duration=0.05)
+  [PASS]  cost_nonnegative
+         All cost columns are ≥ 0 across all workstations.
+     (0.0 s)
+
+  2. Boundary / Degenerate Cases  (unit tests)
+
+  [PASS]  boundary_zero_orders
+         throughput DataFrame is empty — correct.
+  [PASS]  boundary_single_order
+         1 order completed — correct.
+  [PASS]  boundary_large_buffer
+         BlockedPct = 0 for all workstations — correct.
+  [PASS]  boundary_large_lambda
+         FailedPct = 0 with λ = 1 000 000 h — correct.
+  [PASS]  boundary_full_sharing
+         n_non_raw_components = 3 == depth (3) — correct.
+     (0.0 s)
+
+  3. Monotonicity  (direction-of-effect tests)
+
+  [PASS]  monotonicity_more_workstations
+         Makespans decrease with more workstations — correct. (ws=2: 14.20 h, ws=4: 2.70 h, ws=8: 2.65 h)
+  [PASS]  monotonicity_larger_buffer
+         Makespans decrease with larger buffer — correct. (buf=2: 2.70 h, buf=10: 2.70 h, buf=100: 2.70 h)
+  [PASS]  monotonicity_more_orders
+         Makespans increase with more orders — correct. (orders=3: 1.60 h, orders=6: 2.00 h, orders=12: 3.15 h)
+     (0.0 s)
+
+  4. Statistical / Theoretical  (Little's Law + availability)
+
+  [PASS]  little_law
+         L_direct=2.968, L_theory=3.117, rel_err=4.8% ≤ 50% — correct.
+  [PASS]  steady_state_availability
+         A_observed=0.743, A_theory=0.833, |diff|=9.1pp ≤ 10pp — correct.
+     (0.0 s)
+
+────────────────────────────────────────────────────────────────────────
+  Overall: ALL CHECKS PASSED
+────────────────────────────────────────────────────────────────────────
