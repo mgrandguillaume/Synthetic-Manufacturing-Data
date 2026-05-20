@@ -166,3 +166,4 @@ Requires a Julia installation. No additional packages beyond the standard librar
 ```bash
 julia src/models/2026-04-27_rafael_model/generate.jl
 ```
+

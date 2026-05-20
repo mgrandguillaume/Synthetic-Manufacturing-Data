@@ -72,9 +72,28 @@ The model allows us to configure the BOM through the `bill of materials configur
 | `quantity` | Number of units of each input component required per BOM edge (randomly sampled within range) |
 | `sharing_ratio` | Probability that an existing component at a given level is reused instead of a new one being created |
 
+**How BOM levels connect**
+
+The BOM is not a fully-connected bipartite graph between levels. It is built **top-down recursively**, starting from each finished product at level `depth`. For every node, the code draws a random number of children (within the `branching` range) and creates a new node at `level − 1` for each one, then recurses until level 0 (raw materials) is reached. Each parent therefore gets its own independently sampled subset of children — not a shared pool of all nodes at the level below it.
+
+```
+depth = 2, branching = 2, n_products = 2 — each product builds its own subtree:
+
+Level 2:   PROD_1                   PROD_2
+            ├── COMP_L1_1            ├── COMP_L1_3
+            │     ├── RAW_L0_1       │     ├── RAW_L0_4
+            │     └── RAW_L0_2       │     └── RAW_L0_5
+            └── COMP_L1_2            └── COMP_L1_4
+                  └── RAW_L0_3             └── RAW_L0_6
+```
+
+The edges in `bom.csv` record each `(child → parent, quantity)` pair, meaning "you need `quantity` units of this child to produce one unit of this parent."
+
 Both the `branching` and `sharing_ratio` require some more detailed explanation:
 
-A `sharing_ratio` parameter introduces realistic component sharing: when a new input component is needed, there is a `sharing_ratio` chance that an already-existing component at that level is reused instead of a brand-new one being created. This means a single lower-level component can end up serving as an input to multiple higher-level components.
+A `sharing_ratio` parameter introduces realistic component sharing: when a new child node is needed, there is a `sharing_ratio` chance that an already-existing component at that level is reused instead of a brand-new one being created. Reusing a component means it gets a second (or third) incoming edge in the BOM — the pure tree becomes a DAG. This means a single lower-level component can end up serving as an input to multiple higher-level components.
+
+One important edge case: the very first child created at any level is always new, because the shared pool starts empty at that point. Sharing can only occur from the second child onward. So `sharing_ratio = 1.0` does not reduce each level to a single component — it means components are reused as aggressively as possible given the order in which the tree is traversed.
 
 ```
 sharing_ratio = 0 (no sharing):         sharing_ratio > 0 (with sharing):
