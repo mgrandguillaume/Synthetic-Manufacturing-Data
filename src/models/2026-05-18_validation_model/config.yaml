@@ -9,7 +9,7 @@
 
 metadata:
   name: "simple_assembly_factory"
-  seed: 42                      # null for non-reproducible
+  seed: 43                      # null for non-reproducible
 
 # Bill of materials —————————————————————————————————————————————————
 bom:
@@ -89,7 +89,7 @@ failures:
 #
 sweep:
   n_products:         5
-  depth:              {min: 1, max: 10, step: 1}
+  depth:              {min: 1, max: 8, step: 1}
   workstations_count: {min: 1, max: 20, step: 1}   # → [1, 2, ..., 19, 20]
   sharing_ratio:      {min: 0.0, max: 1.0, step: 0.1}  # → [0.0, 0.5, 1.0]
 

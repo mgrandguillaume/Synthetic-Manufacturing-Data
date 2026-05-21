@@ -56,10 +56,12 @@ def show(sim_dir: str = _DEFAULT_SIM_DIR) -> None:
     )
 
     # States shown in the CLEMATIS aggregate chart (Lopes et al. convention).
+    # "failed" is included when the failures feature is enabled.
     CHART_STATES = [
         ("starved",    theme.STATE_COLORS["starved"],    "Starved"),
         ("blocked",    theme.STATE_COLORS["blocked"],    "Blocked"),
         ("processing", theme.STATE_COLORS["processing"], "Working"),
+        ("failed",     theme.STATE_COLORS["failed"],     "Failed"),
     ]
 
     # ── Build subplots ─────────────────────────────────────────────────────────
@@ -116,6 +118,7 @@ def show(sim_dir: str = _DEFAULT_SIM_DIR) -> None:
         "blocked":    "Blocked",
         "starved":    "Starved",
         "idle":       "Idle",
+        "failed":     "Failed",
     }
     for state in theme.STATES_ORDER:
         col_h = _COL_MAP[state]
@@ -130,18 +133,26 @@ def show(sim_dir: str = _DEFAULT_SIM_DIR) -> None:
         ), row=2, col=1)
 
     # ── 3. Throughput ─────────────────────────────────────────────────────────
-    fig.add_trace(go.Scatter(
-        x=[0.0] + throughput_df["Time"].tolist(),
-        y=[0]   + throughput_df["Products"].tolist(),
-        mode="lines+markers",
-        line=dict(color=theme.STATE_COLORS["processing"], width=2, shape="hv"),
-        marker=dict(size=6, color=theme.STATE_COLORS["processing"],
-                    line=dict(color=theme.BG, width=1)),
-        showlegend=False,
-        hovertemplate="<b>%{y} orders</b> completed by %{x:.2f} h<extra></extra>",
-    ), row=2, col=2)
-
-    if not throughput_df.empty:
+    if throughput_df.empty:
+        fig.add_annotation(
+            x=0.5, y=0.5, xref="x4 domain", yref="y4 domain",
+            text="No orders completed within simulation time<br>"
+                 "<span style='font-size:10px'>Try increasing n_ticks or reducing BOM depth</span>",
+            showarrow=False,
+            font=dict(color=theme.SUBTEXT, size=11),
+            align="center",
+        )
+    else:
+        fig.add_trace(go.Scatter(
+            x=[0.0] + throughput_df["Time"].tolist(),
+            y=[0]   + throughput_df["Products"].tolist(),
+            mode="lines+markers",
+            line=dict(color=theme.STATE_COLORS["processing"], width=2, shape="hv"),
+            marker=dict(size=6, color=theme.STATE_COLORS["processing"],
+                        line=dict(color=theme.BG, width=1)),
+            showlegend=False,
+            hovertemplate="<b>%{y} orders</b> completed by %{x:.2f} h<extra></extra>",
+        ), row=2, col=2)
         mean_lead = throughput_df["LeadTime"].mean()
         fig.add_annotation(
             x=0.98, y=0.05, xref="x4 domain", yref="y4 domain",
@@ -175,7 +186,7 @@ def show(sim_dir: str = _DEFAULT_SIM_DIR) -> None:
                 mode="lines",
                 name=comp,
                 line=dict(color=theme.palette(i), width=1.5),
-                showlegend=True,
+                showlegend=False,
                 legendgroup=f"buf_{comp}",
                 hovertemplate=(
                     f"<b>{comp}</b><br>"

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+    #!/usr/bin/env python3
 """
 Factory layout visualizer — powered by Pyvis / vis.js.
 
@@ -142,7 +142,11 @@ NODE_COLORS: dict[str, dict] = {
 # ── HTML tooltip builders ──────────────────────────────────────────────────────
 
 def _build_node_tooltip(node: str, data: dict) -> str:
-    """Return an HTML string for the node hover tooltip."""
+    """Return an HTML string for the node hover tooltip.
+
+    When a workstation produces more than 2 components the produces list is
+    rendered in a 2-column CSS grid so the tooltip stays on-screen.
+    """
     stage = stage_of.get(node, "?")
     parts = [
         f"<b style='font-size:15px'>{node}</b><br>",
@@ -152,32 +156,49 @@ def _build_node_tooltip(node: str, data: dict) -> str:
 
     outputs = ws_outputs.get(node)
     if outputs:
+        sorted_outputs = sorted(outputs, key=lambda r: r[0])
+        two_cols = len(sorted_outputs) > 2
+
         parts.append(
             "<hr style='border:none;border-top:1px solid #3a3f55;margin:7px 0'>"
             "<b>Produces:</b>"
         )
-        for comp, pt, st in sorted(outputs, key=lambda r: r[0]):
+
+        # Wrap in a 2-column grid when there are many components.
+        if two_cols:
             parts.append(
-                f"<div style='margin:5px 0 2px 8px'>"
+                "<div style='display:grid;grid-template-columns:1fr 1fr;"
+                "gap:6px 16px;margin-top:5px'>"
+            )
+
+        for comp, pt, st in sorted_outputs:
+            # Each component block sits in its own grid cell.
+            margin = "margin:0" if two_cols else "margin:5px 0 2px 8px"
+            parts.append(f"<div style='{margin}'>")
+            parts.append(
                 f"&#9654;&nbsp;<b>{comp}</b>"
                 f"<span style='color:#8b949e;margin-left:8px'>"
                 f"PT&nbsp;{pt:.2f}h&nbsp;&nbsp;|&nbsp;&nbsp;ST&nbsp;{st:.2f}h"
-                f"</span></div>"
+                f"</span>"
             )
             inputs_needed = sorted(set(comp_inputs.get(comp, [])))
             if inputs_needed:
                 parts.append(
-                    "<div style='margin-left:22px;color:#8b949e;font-size:12px'>"
+                    "<div style='margin-left:14px;color:#8b949e;font-size:12px'>"
                     "<i>needs:</i></div>"
                 )
                 for inp in inputs_needed:
                     suppliers = ", ".join(sorted(comp_producers.get(inp, ["?"])))
                     parts.append(
-                        f"<div style='margin-left:30px;font-size:12px'>"
+                        f"<div style='margin-left:20px;font-size:12px'>"
                         f"&#9666;&nbsp;{inp}&nbsp;"
                         f"<span style='color:#6b7280'>({suppliers})</span>"
                         f"</div>"
                     )
+            parts.append("</div>")   # end component cell
+
+        if two_cols:
+            parts.append("</div>")   # end grid
 
     return "".join(parts)
 
@@ -271,7 +292,7 @@ tooltip_injection = f"""
     border: 1px solid #3a3f55;
     font-family: Inter, sans-serif;
     font-size: 13px;
-    max-width: 340px;
+    max-width: 640px;
     z-index: 9999;
     display: none;
     box-shadow: 0 4px 24px rgba(0,0,0,0.6);
@@ -294,7 +315,7 @@ tooltip_injection = f"""
 
   function _place() {{
     var x = mx + 16, y = my - 10;
-    if (x + 360 > window.innerWidth)  x = mx - 360;
+    if (x + tip.offsetWidth + 16 > window.innerWidth)  x = mx - tip.offsetWidth - 16;
     if (y + tip.offsetHeight > window.innerHeight) y = my - tip.offsetHeight - 10;
     tip.style.left = x + 'px';
     tip.style.top  = y + 'px';

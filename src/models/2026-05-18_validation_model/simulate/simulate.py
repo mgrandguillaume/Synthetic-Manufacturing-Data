@@ -758,6 +758,10 @@ if __name__ == "__main__":
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config.yaml")
     )
     _cfg  = utils.load_config(_config_path)
+
+    import validate_config
+    validate_config.validate(_cfg)
+
     _sim  = _cfg.get("simulation", {})
     _fail = _cfg.get("failures", {})
 

@@ -437,6 +437,9 @@ def generate_simple_assembly(config_path: str, export_csv: bool = True) -> dict:
     """
     cfg = utils.load_config(config_path)
 
+    import validate_config
+    validate_config.validate(cfg)
+
     bom = cfg["bom"]
     ws  = cfg["workstations"]
     cc  = cfg["configurations"]

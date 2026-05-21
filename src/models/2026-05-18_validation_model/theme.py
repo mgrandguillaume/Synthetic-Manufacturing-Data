@@ -52,6 +52,7 @@ COST_COLORS: dict[str, str] = {
     "SetupCost":     STATE_COLORS["setup"],       # amber
     "OperatingCost": STATE_COLORS["processing"],  # blue
     "TransportCost": SUBTEXT,                     # grey
+    "RepairCost":    STATE_COLORS["failed"],      # red — machine breakdown repair
 }
 
 
