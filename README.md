@@ -167,3 +167,14 @@ Requires a Julia installation. No additional packages beyond the standard librar
 julia src/models/2026-04-27_rafael_model/generate.jl
 ```
 
+# Model wide bugs found
+
+## Generation
+- Fewer workstations than depth can be assigned (NOT FIXED!)
+- Some workstations are not assigned any component to work on (MODELS FIXED: 05/18 VALIDATION)
+- All workstations from level x connect to all workstations from level x + 1. This should be specific to what product is made (NOT FIXED)
+
+## Generation Visualization
+- Layout dept was not visualized correctly: all workstations were stacked vertically (MODELS FIXED: 05/18 VALIDATION)
+
+

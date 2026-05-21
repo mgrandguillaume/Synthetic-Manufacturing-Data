@@ -13,8 +13,8 @@ metadata:
 
 # Bill of materials —————————————————————————————————————————————————
 bom:
-  n_products: 2
-  depth: 2                      # 2 ⇒ raw → intermediate → product
+  n_products: 4
+  depth: 5                      # 2 ⇒ raw → intermediate → product
   branching: [2, 3]             # children per parent (uniform random in range)
   quantity: [1, 3]              # qty on each BOM edge
   sharing_ratio: 0.3            # P(reuse existing component at same level)
@@ -22,7 +22,19 @@ bom:
 # Workstations —————————————————————————————————————————————————————
 # All workstations are assembly. :Inv (source) and :QI (sink) added automatically.
 workstations:
-  count: 4
+  count: 14
+  # stage_balance controls how evenly workstations are distributed across BOM
+  # levels (stages).  It is the concentration parameter of a symmetric Dirichlet
+  # distribution used to randomly partition the workstation pool:
+  #
+  #   null / omit  ->  perfectly uniform floor-based split  (original behaviour)
+  #   10.0         ->  near-uniform; stages differ by at most 1-2 workstations
+  #   1.0          ->  flat Dirichlet: uniformly random over all valid partitions
+  #   0.5          ->  skewed: a few stages absorb most workstations
+  #
+  # Rule of thumb: values above ~5 look roughly uniform; values below ~1 produce
+  # pronounced bottleneck stages.  Must be > 0 if set.
+  stage_balance: null
 
 # Configurations (workstation × component capability) ————————————————
 configurations:

@@ -8,5 +8,7 @@ dependencies = [
     "numba>=0.59",
     "pandas",
     "plotly",
+    "pyvis",
+    "python-igraph>=1.0.0",
     "pyyaml",
 ]

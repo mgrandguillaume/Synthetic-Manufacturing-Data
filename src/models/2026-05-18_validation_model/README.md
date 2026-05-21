@@ -4,171 +4,262 @@ This model generates and simulates a small synthetic assembly factory driven by 
 
 ---
 
+## Contents
+
+- [Generate](#generate)
+  - [Step 1 — BOM tree construction](#step-1--bom-tree-construction)
+  - [Step 2 — Ownership renaming](#step-2--ownership-renaming)
+  - [Step 3 — Stage assignment](#step-3--stage-assignment)
+  - [Step 4 — Configuration sampling](#step-4--configuration-sampling)
+  - [Step 5 — Forced assignment](#step-5--forced-assignment)
+  - [Step 6 — Layout derivation](#step-6--layout-derivation)
+  - [Output files](#output-files)
+- [Simulate](#simulate)
+  - [Implementation](#implementation)
+  - [Machine failures](#machine-failures)
+  - [What it does](#what-it-does)
+  - [Output files](#output-files-1)
+- [Sweep](#sweep)
+  - [Parameter groups](#parameter-groups)
+  - [Alpha (α)](#alpha-α)
+  - [Output files](#output-files-2)
+  - [Visualize](#visualize)
+    - [Single simulation run](#single-simulation-run)
+    - [Parameter sweep](#parameter-sweep)
+- [Validate](#validate)
+  - [How to run](#how-to-run)
+  - [Check groups](#check-groups)
+  - [Output files](#output-files-3)
+  - [Visualize](#visualize-1)
+- [Model Limitations](#model-limitations)
+  - [Greedy, non-anticipating scheduler](#greedy-non-anticipating-scheduler)
+  - [No stochasticity during simulation execution](#no-stochasticity-during-simulation-execution)
+  - [Infinite raw material supply](#infinite-raw-material-supply)
+  - [Machine failures — partially addressed](#machine-failures--partially-addressed)
+  - [No labour or operator constraints](#no-labour-or-operator-constraints)
+  - [Instantaneous material transport](#instantaneous-material-transport)
+  - [Uniform buffer capacity](#uniform-buffer-capacity)
+  - [Fixed, deterministic order interarrival](#fixed-deterministic-order-interarrival)
+  - [No preemption](#no-preemption)
+  - [No quality control or scrap](#no-quality-control-or-scrap)
+
+---
+
 ## Generate
 
 **Script:** `generate/generate.py`  
 **Dependency:** `pip install pyyaml`  
 **Run:** `python generate/generate.py`
 
-The generator builds a complete factory description from `config.yaml` and writes it to `generate/gen_output/` as five CSV files.
+The generator builds a complete factory description from `config.yaml` and writes five CSV files to `generate/gen_output/`. Generation proceeds in six sequential steps:
 
-### What it builds
+1. **BOM tree construction** — build the component hierarchy top-down from each product down to raw materials
+2. **Ownership renaming** — append a product-ownership suffix to every non-product component ID
+3. **Stage assignment** — divide workstations into `depth` groups, one group per BOM level
+4. **Configuration sampling** — randomly assign workstations to components within each stage
+5. **Forced assignment** — ensure no workstation is left permanently idle
+6. **Layout derivation** — place directed edges between workstations based on actual BOM dependencies
 
-**Workstations**  
-A workstation represents a single machine or assembly station on the factory floor. Each workstation can perform one type of operation at a time. They are represented as nodes.
+---
 
-**Connections**  
-Connections are directed edges between workstations that define the path materials travel through the factory. A connection from workstation A to workstation B means that output from A flows as input into B.
+### Step 1 — BOM tree construction
 
-Two fixed nodes are always present: Inv (Inventory) as the source, where all raw materials originate, and QI (Quality Inspection) as the sink, where finished products exit the factory. A configurable number of assembly workstations (WS_1, WS_2, …) are placed in between.
+A **Bill of Materials (BOM)** defines what each product is made of, all the way down to raw materials. The generator builds the BOM **top-down and recursively**, starting from each finished product.
 
-**Structure**  
-The workstations are represented in a Directed Acyclic Graph (DAG) structure. Workstations are represented as nodes which are connected by edges representing the flow of materials.
-
-The graph is structured with specific conventions. As a basis, the graph contains 'levels' which represent a new stage in the processing flow. The level numbers run from the bottom up: raw materials sit at `level 0`, intermediate components (`COMP_*`) occupy the levels in between, and finished products (`PROD_*`) sit at the highest level (`level = depth`). So a higher level number means closer to the finished product, following conventions used in ERP systems.
-
-Components are automatically assigned an ID using the format `<TYPE>_L<level>_<counter>`:
-- **`RAW_L0_3`** — the 3rd raw material at level 0
-- **`COMP_L1_1`** — the 1st intermediate component created at BOM level 1
-- **`PROD_2`** — the 2nd finished product (products drop the level suffix as they always sit at the top)
-
-The following diagram depicts these conventions.
+For every node, it samples a random number of children within the `branching` range and creates each child at `level − 1`. This recurses until `level 0` (raw materials) is reached. Level numbers run bottom-up: `level 0` = raw materials, `level depth` = finished products. Higher numbers mean closer to the finished product, following ERP conventions.
 
 ```
-Level = 2 (depth)       PROD_1
-                        /    \
-Level = 1           COMP_L1_1  COMP_L1_2
-                    /    \
-Level = 0       RAW_L0_1  RAW_L0_2
+depth = 2, branching = 2, n_products = 2
+
+Level 2:   PROD_1                        PROD_2
+            ├── COMP_L1_1_(P1)            ├── COMP_L1_3_(P2)
+            │     ├── RAW_L0_1_(P1)       │     ├── RAW_L0_4_(P2)
+            │     └── RAW_L0_2_(P1)       │     └── RAW_L0_5_(P2)
+            └── COMP_L1_2_(P1)            └── COMP_L1_4_(P2)
+                  └── RAW_L0_3_(P1)             └── RAW_L0_6_(P2)
 ```
 
-### Configurations
+*(The `_(P…)` suffixes are added in Step 2 — shown here for consistency with actual output.)*
 
-Now that the standard conventions have been specified, the configurations of the structure will be addressed. There are three main sections of configurations. Namely, `workstation configurations`, `bill of materials configurations` and the `layout`.
+The `bom.csv` file records each `(child → parent, quantity)` edge, meaning "you need `quantity` units of this child to produce one unit of this parent."
 
-**Workstation configurations**
+**Component sharing**
 
-The `workstation configurations` regard the settings that can be applied to these workstations. These are described in the following table.
+By default (`sharing_ratio = 0`) every node gets its own private subtree. When `sharing_ratio > 0`, each time the generator needs a new child it has a `sharing_ratio` chance of reusing an already-existing component at that level instead of creating a new one. Reusing a component adds a second incoming BOM edge to it, turning the pure tree into a DAG.
 
-| Parameter                 | Description                                                                                                                                                    |
-|---------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `workstation_count`       | The number of workstations                                                                                                                                     |
-| `producers_per_component` | How many workstations are capable of producing each component (randomly sampled per component, clamped to ≤ the number of workstations in that component's stage) |
-| `processing_time`         | Time to produce one unit of a component                                                                                                                        |
-| `setup_time`              | Time required for a changeover when a workstation switches to a different component                                                                            |
-| `setup_cost`              | Cost charged once per changeover                                                                                                                               |
-| `operating_cost`          | Cost per unit produced                                                                                                                                         |
+```
+sharing_ratio = 0 (no sharing):          sharing_ratio > 0 (with sharing):
 
-**Bill of materials**
+Level 2   PROD_1        PROD_2           Level 2   PROD_1          PROD_2
+           /   \          /   \                      /   \            /   \
+Level 1   C1   C2        C3   C4         Level 1   C1    C2         C1    C3
+                                                          ^_________^
+                                                    C1 = COMP_L1_1_(P1,P2)
+```
 
-A Bill of Materials (BOM) is a structured list of all components, sub-components, and raw materials required to produce a finished product, along with the quantities needed at each stage. In a manufacturing context it defines what needs to be made and from what.
-The model allows us to configure the BOM through the `bill of materials configurations`. The following table states these configurations.
+The very first child created at any level is always new (the pool is empty at that point), so `sharing_ratio = 1.0` does not collapse a level to a single component — it reuses as aggressively as possible given the traversal order.
+
+**BOM parameters**
 
 | Parameter | Description |
 |---|---|
 | `n_products` | Number of finished products to generate |
-| `depth` | Number of levels in the BOM tree (e.g. `depth = 2` means raw → intermediate → product) |
-| `branching` | Number of input components each component requires (randomly sampled within range) |
-| `quantity` | Number of units of each input component required per BOM edge (randomly sampled within range) |
-| `sharing_ratio` | Probability that an existing component at a given level is reused instead of a new one being created |
+| `depth` | Number of BOM levels (`depth = 2` means raw → intermediate → product) |
+| `branching` | `[min, max]` — number of children each node requires; sampled independently per node |
+| `quantity` | `[min, max]` — units of each input required per BOM edge; sampled per edge |
+| `sharing_ratio` | Probability (0–1) that an existing component at a given level is reused instead of a new one being created |
 
-**How BOM levels connect**
+---
 
-The BOM is not a fully-connected bipartite graph between levels. It is built **top-down recursively**, starting from each finished product at level `depth`. For every node, the code draws a random number of children (within the `branching` range) and creates a new node at `level − 1` for each one, then recurses until level 0 (raw materials) is reached. Each parent therefore gets its own independently sampled subset of children — not a shared pool of all nodes at the level below it.
+### Step 2 — Ownership renaming
+
+After the full BOM is built, every non-product component and every raw material is renamed with a **product-ownership suffix** listing which finished products it transitively feeds.
+
+The generator walks downward from each product through the BOM to find all reachable nodes. A component that only feeds `PROD_1` gets `_(P1)`; one that feeds both `PROD_1` and `PROD_2` gets `_(P1,P2)`. Finished products (`PROD_*`) keep their original IDs — no suffix.
+
+**Component ID format:** `<TYPE>_L<level>_<counter>_(P…)`
+
+| Example ID | Meaning |
+|---|---|
+| `RAW_L0_3_(P2)` | 3rd raw material; feeds only product 2 |
+| `COMP_L1_1_(P1,P2)` | 1st level-1 intermediate; shared between products 1 and 2 |
+| `COMP_L3_2_(P1)` | 2nd level-3 intermediate; exclusive to product 1 |
+| `PROD_2` | 2nd finished product; no suffix |
+
+The rename is applied to the component list, all BOM edges, and the producible component list before any workstation assignment takes place.
+
+---
+
+### Step 3 — Stage assignment
+
+Workstations are divided into `depth` groups called **stages**, one stage per BOM level. A workstation in stage *l* can only be assigned components at BOM level *l*.
+
+How many workstations end up in each stage is controlled by the `stage_balance` parameter (see below). The result is logged to stdout on every run so the split is always visible:
 
 ```
-depth = 2, branching = 2, n_products = 2 — each product builds its own subtree:
-
-Level 2:   PROD_1                   PROD_2
-            ├── COMP_L1_1            ├── COMP_L1_3
-            │     ├── RAW_L0_1       │     ├── RAW_L0_4
-            │     └── RAW_L0_2       │     └── RAW_L0_5
-            └── COMP_L1_2            └── COMP_L1_4
-                  └── RAW_L0_3             └── RAW_L0_6
+[generate] stage assignment (stage 1:2, stage 2:5, stage 3:3, stage 4:2, stage 5:2)
 ```
 
-The edges in `bom.csv` record each `(child → parent, quantity)` pair, meaning "you need `quantity` units of this child to produce one unit of this parent."
-
-Both the `branching` and `sharing_ratio` require some more detailed explanation:
-
-A `sharing_ratio` parameter introduces realistic component sharing: when a new child node is needed, there is a `sharing_ratio` chance that an already-existing component at that level is reused instead of a brand-new one being created. Reusing a component means it gets a second (or third) incoming edge in the BOM — the pure tree becomes a DAG. This means a single lower-level component can end up serving as an input to multiple higher-level components.
-
-One important edge case: the very first child created at any level is always new, because the shared pool starts empty at that point. Sharing can only occur from the second child onward. So `sharing_ratio = 1.0` does not reduce each level to a single component — it means components are reused as aggressively as possible given the order in which the tree is traversed.
-
-```
-sharing_ratio = 0 (no sharing):         sharing_ratio > 0 (with sharing):
-
-Level = 2   PROD_1      PROD_2          Level = 2   PROD_1        PROD_2
-             /   \       /   \                        /   \         /   \
-Level = 1  C1    C2    C3    C4         Level = 1  C1     C2      C1    C3
-                                                           ^______^
-                                                            shared
-```
-
-Where `C1` = `COMP_L1_1`, `C2` = `COMP_L1_2`, etc. In the sharing example, `COMP_L1_1` is required by both `PROD_1` and `PROD_2`, so instead of 4 unique level-1 components there are only 3.
-
-Note that the `branching` value is randomly drawn from a uniform distribution independently for every component.
-```
-branching = 2:          branching = 3:
-
-Level = 1    COMP_1      Level = 1      COMP_1
-             /    \                    /   |   \
-Level = 0  R1      R2   Level = 0   R1   R2   R3
-```
-
-**Layout**
-
-The layout of the factory is derived automatically from a **stage assignment** based on the BOM depth and workstation count. The key concept is the **alpha (α) parameter**:
+The **alpha (α) parameter** summarises the average serial/parallel topology:
 
 ```
 α = depth / workstations_count
 ```
 
-Alpha controls how many workstations are assigned to each BOM stage:
-- **α ≈ 1** — roughly one workstation per stage; the factory is serial and each workstation is specialised for one BOM level.
-- **α ≈ 0** — many workstations per stage; the factory is wide and parallel with high redundant capacity at each level.
+- **α = 1** — one workstation per stage on average; serial, specialised factory
+- **α → 0** — many workstations per stage on average; wide, parallel factory with redundant capacity at each level
 
-The workstations are divided into `depth` groups (stages) using floor-based arithmetic. A workstation in stage *l* can only produce components at BOM level *l*. The layout edges follow directly from this assignment:
+Note that α captures the *average* stage size. With `stage_balance` set to a low value, individual stages can deviate significantly from this average — two factories with the same α can have very different bottleneck patterns.
 
-- **Inv → every workstation in stage 1** (raw materials enter at the first processing stage)
-- **Every workstation in stage *l* → every workstation in stage *l*+1** (for l = 1 … depth−1)
-- **Every workstation in stage depth → QI** (finished products leave the factory)
+> **Constraint:** `depth` must not exceed `workstations_count`. Each stage must receive at least one workstation, so `depth > workstations_count` is invalid.
 
-Within each stage the workstations operate in parallel; between stages the flow is serial.
+**Stage balance**
+
+By default (`stage_balance: null`) workstations are distributed using simple floor-based arithmetic, giving a near-perfectly-uniform split. Setting `stage_balance` to a positive number switches to a **Dirichlet-based random partition**, which is more realistic: real factories rarely have exactly equal capacity at every stage.
+
+The `stage_balance` value is the concentration parameter *c* of a symmetric Dirichlet distribution over the `depth` stage sizes. The generator samples *k* = `depth` independent Gamma(*c*, 1) variates, normalises them to sum to `workstations_count`, and rounds using the largest-remainder method. Each stage is guaranteed at least one workstation.
+
+| `stage_balance` | Effect |
+|---|---|
+| `null` | Perfectly uniform floor-based split (original behaviour) |
+| `10.0` | Near-uniform; stages differ by at most 1–2 workstations |
+| `1.0` | Flat Dirichlet — uniformly random over all valid partitions |
+| `0.5` | Skewed — a few stages absorb most workstations |
 
 ```
-depth = 3, workstations = 3  (α = 1.0 — one WS per stage, serial):
+Same factory, n_ws = 10, depth = 5, three different draws at stage_balance = 1.0:
 
-Inv ── WS_1 ──────────── WS_2 ──────────── WS_3 ── QI
-       stage 1            stage 2            stage 3
-      (level 1)          (level 2)          (level 3)
-
-
-depth = 2, workstations = 4  (α = 0.5 — two WSs per stage, parallel):
-
-           ┌── WS_1 ──┐               ┌── WS_3 ──┐
-Inv ───────┤           ├───────────────┤           ├─── QI
-           └── WS_2 ──┘               └── WS_4 ──┘
-           ──── stage 1 ────           ──── stage 2 ────
-             (BOM level 1)               (BOM level 2)
+  Draw 1:  stage 1:1  stage 2:4  stage 3:2  stage 4:2  stage 5:1   (bottleneck at 1 and 5)
+  Draw 2:  stage 1:3  stage 2:1  stage 3:3  stage 4:2  stage 5:1   (bottleneck at 2 and 5)
+  Draw 3:  stage 1:2  stage 2:2  stage 3:2  stage 4:2  stage 5:2   (happens to be uniform)
 ```
 
-The two configurable layout parameters control edge properties:
+A high value like `10.0` is appropriate when you want α to remain the dominant variable (e.g. during a parameter sweep). A value around `1.0` is appropriate for single-run realism. Values below `0.5` produce extreme skew that is only realistic for very specialised factories.
+
+**Stage assignment parameters**
 
 | Parameter | Description |
 |---|---|
-| `flow_capacity` | Maximum number of units that can flow along an edge (randomly sampled within range per edge) |
-| `transport_cost` | Cost per unit transported along an edge (randomly sampled within range per edge) |
+| `workstations.count` | Total number of assembly workstations |
+| `workstations.stage_balance` | Dirichlet concentration for stage sizing (`null` = uniform; higher = more uniform; lower = more skewed). Must be `> 0` if set. |
+
+---
+
+### Step 4 — Configuration sampling
+
+A **configuration** links one workstation to one component and specifies the time and cost of producing that component on that machine. A single workstation can hold multiple configurations, meaning it is capable of producing several different components (with a changeover in between).
+
+For each producible component at BOM level *l*, the generator randomly selects between `producers_per_component[0]` and `producers_per_component[1]` workstations from stage *l*. Each selected `(workstation, component)` pair gets independently sampled timing and cost values.
+
+**Configuration parameters**
+
+| Parameter | Description |
+|---|---|
+| `producers_per_component` | `[min, max]` — how many workstations can produce each component; clamped to the stage size |
+| `processing_time` | `[min, max]` hours — time to produce one unit; sampled per (workstation, component) pair |
+| `setup_time` | `[min, max]` hours — changeover time when switching to this component; sampled per pair |
+| `setup_cost` | `[min, max]` — cost charged once per changeover; sampled per pair |
+| `operating_cost` | `[min, max]` — cost per unit produced; sampled per pair |
+
+---
+
+### Step 5 — Forced assignment
+
+Random sampling in Step 4 does not guarantee every workstation receives at least one configuration. A workstation with zero configurations is permanently idle: it occupies a stage slot, draws layout edges, but never produces anything — distorting both α and simulation utilisation figures.
+
+After the main sampling pass, the generator scans each stage for unassigned workstations. Each idle workstation is assigned the component in its stage that currently has the **fewest producers** (fewest-producers heuristic). This adds redundancy at the most constrained point, which is what a real production planner would do. A warning is printed to stdout each time this occurs:
+
+```
+[generate] forced assignment: WS_6 -> COMP_L3_2_(P1,P2) (was idle at stage 3)
+```
+
+---
+
+### Step 6 — Layout derivation
+
+Layout edges define which workstations are physically connected — i.e. which machines ship material to which other machines. They are derived entirely from the BOM and the configurations from Steps 4–5, so every edge represents material that actually needs to move. No edges are placed between workstations that do not exchange a real component.
+
+**How edges are placed:**
+
+For each BOM edge `(comp_in → comp_out)`, the generator connects every workstation that produces `comp_in` to every workstation that produces `comp_out`. Two endpoint rules complete the graph:
+
+- **Inv → WS:** raw materials originate from Inv, so any workstation that consumes a raw material receives an incoming edge from Inv.
+- **WS → QI:** any workstation that produces a finished product gets an outgoing edge to QI.
+
+If multiple BOM paths result in the same physical `(origin, destination)` pair — e.g. WS_3 supplies two different components to WS_7 — these are deduplicated into a single edge with one capacity and one cost.
+
+```
+Example: WS_1 produces COMP_L1_1_(P1), WS_3 assembles PROD_1
+
+  BOM path:  RAW_L0_1_(P1)  ->  COMP_L1_1_(P1)  ->  PROD_1
+
+  Edges created:
+    Inv  -> WS_1    raw material flows from inventory to WS_1
+    WS_1 -> WS_3    COMP_L1_1 flows from WS_1 to the assembly station
+    WS_3 -> QI      PROD_1 leaves the factory to Quality Inspection
+
+  WS_1 -> WS_4 is NOT created unless WS_4 also consumes
+  a component that WS_1 produces.
+```
+
+**Layout parameters**
+
+| Parameter | Description |
+|---|---|
+| `flow_capacity` | `[min, max]` — maximum units that can flow along an edge; sampled per edge |
+| `transport_cost` | `[min, max]` — cost per unit transported along an edge; sampled per edge |
+
+---
 
 ### Output files
 
 | File | Contents |
 |---|---|
-| `components.csv` | All components with their ID, name, BOM level, and whether they are a final product |
-| `bom.csv` | BOM edges: which component is required (`Input`), for which parent (`Output`), and in what quantity |
-| `workstations.csv` | All workstations (source, production, sink) |
-| `configurations.csv` | Which workstation can produce which component, and at what cost/time |
-| `layout.csv` | Material flow edges between workstations with capacity and transport cost |
+| `components.csv` | All components: ID, name, BOM level, and whether it is a finished product |
+| `bom.csv` | BOM edges: `Input` component, `Output` component, and `Quantity` required |
+| `workstations.csv` | All workstations (Inv, WS_*, QI) with their type: source / production / sink |
+| `configurations.csv` | Each (workstation, component) capability pair with processing time, setup time, setup cost, and operating cost |
+| `layout.csv` | Material flow edges: origin workstation, destination workstation, capacity, and transport cost |
 
 ---
 

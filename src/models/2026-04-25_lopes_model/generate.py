@@ -85,7 +85,7 @@ class ModelGenerator:
 			# draw a sample from the uniform distribution
 			r_uniform = np.random.default_rng().uniform(0,p_steps,1)
 			# the production step for the next node will be the floor of the sample
-			ws_next_node = int(np.floor(r_uniform))
+			ws_next_node = int(np.floor(r_uniform.item()))
 			# append the new node to the respective node list
 			work_stations[ws_next_node].append(node_index)
 			# update node index and attribute lists
