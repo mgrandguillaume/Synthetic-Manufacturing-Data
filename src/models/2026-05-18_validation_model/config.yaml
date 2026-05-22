@@ -13,7 +13,7 @@ metadata:
 
 # Bill of materials —————————————————————————————————————————————————
 bom:
-  n_products: 4
+  n_products: 2
   depth: 5                      # 2 ⇒ raw → intermediate → product
   branching: [2, 3]             # children per parent (uniform random in range)
   quantity: [1, 3]              # qty on each BOM edge
@@ -34,7 +34,7 @@ workstations:
   #
   # Rule of thumb: values above ~5 look roughly uniform; values below ~1 produce
   # pronounced bottleneck stages.  Must be > 0 if set.
-  stage_balance: null
+  stage_balance: 1.0
 
 # Configurations (workstation × component capability) ————————————————
 configurations:

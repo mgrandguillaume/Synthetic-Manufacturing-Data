@@ -204,8 +204,10 @@ def _numba_tick_loop(
                         ttf_h      = ws_lambda[wi] * np.random.weibull(ws_beta[wi])
                         ws_ttf[wi] = _to_ticks(ttf_h, tick_duration)
 
-                elif ws_state[wi] != _BLOCKED:
-                    # Advance age; check whether the TTF has been reached.
+                elif ws_state[wi] == _SETUP or ws_state[wi] == _PROCESSING:
+                    # Advance age only during active work (setup or processing).
+                    # Idle and starved machines are not under mechanical load and
+                    # should not accumulate Weibull wear-out age.
                     ws_age[wi] += 1
                     if ws_age[wi] >= ws_ttf[wi]:
                         # Machine fails: charge repair cost, sample MTTR.
