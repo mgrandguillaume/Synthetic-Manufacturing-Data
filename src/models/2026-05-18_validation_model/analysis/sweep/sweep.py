@@ -21,6 +21,7 @@ import pandas as pd
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from engine.generate.generate import generate_from_params  # noqa: E402
+from engine.generate.factory  import pt_range             # noqa: E402
 from engine.simulate.simulate import simulate              # noqa: E402
 from shared_utils import utils                             # noqa: E402
 
@@ -65,7 +66,15 @@ def main():
         "branching":               cfg["bom"]["branching"],
         "quantity":                cfg["bom"]["quantity"],
         "producers_per_component": cfg["configurations"]["producers_per_component"],
-        "processing_time":         cfg["configurations"]["processing_time"],
+        "processing_time":         (
+            pt_range(
+                cfg["configurations"]["assembly_type"],
+                cfg["bom"]["depth"],
+                cfg["configurations"].get("variation", 0.10),
+            )
+            if "assembly_type" in cfg["configurations"]
+            else cfg["configurations"]["processing_time"]
+        ),
         "setup_time":              cfg["configurations"]["setup_time"],
         "setup_cost":              cfg["configurations"]["setup_cost"],
         "operating_cost":          cfg["configurations"]["operating_cost"],
