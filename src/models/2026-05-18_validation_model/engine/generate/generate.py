@@ -14,8 +14,8 @@ from dataclasses import dataclass
 
 # Add the model root to sys.path so utils (and other packages) are importable
 # whether this module is run directly or imported as part of a package.
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-import utils
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+from shared_utils import utils
 
 
 @dataclass
@@ -475,7 +475,7 @@ def generate_simple_assembly(config_path: str, export_csv: bool = True) -> dict:
     """
     cfg = utils.load_config(config_path)
 
-    import validate_config
+    from shared_utils import validate_config
     validate_config.validate(cfg)
 
     bom = cfg["bom"]
@@ -577,7 +577,7 @@ def generate_from_params(params: dict, export_csv: bool = False,
 
 if __name__ == "__main__":
     script_dir  = os.path.dirname(os.path.abspath(__file__))
-    config_path = os.path.normpath(os.path.join(script_dir, "..", "config.yaml"))
+    config_path = os.path.normpath(os.path.join(script_dir, "..", "..", "config.yaml"))
     result = generate_simple_assembly(config_path)
     print(f"Config:         {config_path}")
     print(f"Components:     {len(result['components'])}")

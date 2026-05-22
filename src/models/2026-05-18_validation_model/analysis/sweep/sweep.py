@@ -18,11 +18,11 @@ import pandas as pd
 
 # ── Imports from the model root ────────────────────────────────────────────────
 # One insert puts the model root on the path; package imports then work cleanly.
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from generate.generate import generate_from_params  # noqa: E402
-from simulate.simulate import simulate              # noqa: E402
-import utils                                        # noqa: E402
+from engine.generate.generate import generate_from_params  # noqa: E402
+from engine.simulate.simulate import simulate              # noqa: E402
+from shared_utils import utils                             # noqa: E402
 
 # ── Parameter expansion helper ─────────────────────────────────────────────────
 def _expand(val) -> list:

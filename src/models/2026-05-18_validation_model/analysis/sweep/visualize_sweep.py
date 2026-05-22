@@ -23,8 +23,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # Import shared theme from the model root directory.
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-import theme
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+from shared_utils import theme
 
 _DEFAULT_SWEEP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sweep_output")
 

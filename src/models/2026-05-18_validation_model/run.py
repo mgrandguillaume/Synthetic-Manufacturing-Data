@@ -21,11 +21,11 @@ import sys
 
 # run.py sits at the model root, so Python already adds the root to sys.path.
 # Package imports and utils work without any sys.path manipulation.
-from generate.generate import generate_simple_assembly
-from sweep.sweep import main as run_sweep
+from engine.generate.generate import generate_simple_assembly
+from analysis.sweep.sweep import main as run_sweep
 
-SWEEP_DIR    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sweep", "sweep_output")
-VALIDATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "validate", "validation_output")
+SWEEP_DIR    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "analysis", "sweep", "sweep_output")
+VALIDATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "analysis", "validate", "validation_output")
 
 
 def main() -> None:
@@ -78,7 +78,7 @@ def main() -> None:
 
     # ── Sweep visualisation ────────────────────────────────────────────────────
     if not args.no_viz:
-        from sweep.visualize_sweep import show
+        from analysis.sweep.visualize_sweep import show
         show(SWEEP_DIR)
 
     # ── Validation (optional) ──────────────────────────────────────────────────
@@ -93,7 +93,7 @@ def _run_validation(show_charts: bool = True) -> None:
     print("═" * 72 + "\n")
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     os.makedirs(VALIDATE_DIR, exist_ok=True)
-    from validate.validate import run_all
+    from analysis.validate.validate import run_all
     passed = run_all(show_charts=show_charts, report_dir=VALIDATE_DIR)
     if not passed:
         sys.exit(1)

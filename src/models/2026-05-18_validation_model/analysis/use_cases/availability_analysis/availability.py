@@ -13,7 +13,7 @@ configuration (from config.yaml).
 
 Usage
 -----
-  uv run src/models/2026-05-18_validation_model/use_cases/availability_analysis/availability.py
+  uv run src/models/2026-05-18_validation_model/analysis/use_cases/availability_analysis/availability.py
 
 Output
 ------
@@ -34,14 +34,14 @@ from plotly.subplots import make_subplots
 
 # ── Path setup ────────────────────────────────────────────────────────────────
 _THIS_DIR   = os.path.dirname(os.path.abspath(__file__))
-_MODEL_ROOT = os.path.normpath(os.path.join(_THIS_DIR, "..", ".."))
+_MODEL_ROOT = os.path.normpath(os.path.join(_THIS_DIR, "..", "..", ".."))
 sys.path.insert(0, _MODEL_ROOT)
 
-import utils
-import validate_config
-from generate.generate import generate_simple_assembly
-from use_cases.availability_analysis import theoretical, theoretical_integrated, experimental
-import theme
+from shared_utils import utils
+from shared_utils import validate_config
+from engine.generate.generate import generate_simple_assembly
+from . import theoretical, theoretical_integrated, experimental
+from shared_utils import theme
 
 # ── Config ────────────────────────────────────────────────────────────────────
 _CONFIG_PATH = os.path.join(_MODEL_ROOT, "config.yaml")

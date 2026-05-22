@@ -25,11 +25,11 @@ import os
 import sys
 
 # ── Path setup ─────────────────────────────────────────────────────────────────
-_MODEL_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+_MODEL_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
 sys.path.insert(0, _MODEL_ROOT)
 
-from generate.generate import generate_from_params   # noqa: E402
-from simulate.simulate import simulate               # noqa: E402
+from engine.generate.generate import generate_from_params   # noqa: E402
+from engine.simulate.simulate import simulate               # noqa: E402
 
 
 # ── Base parameters ────────────────────────────────────────────────────────────

@@ -24,12 +24,12 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # ── Path setup ─────────────────────────────────────────────────────────────────
-_MODEL_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+_MODEL_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
 sys.path.insert(0, _MODEL_ROOT)
 
-from generate.generate import generate_from_params   # noqa: E402
-from simulate.simulate import simulate               # noqa: E402
-import theme                                         # noqa: E402
+from engine.generate.generate import generate_from_params   # noqa: E402
+from engine.simulate.simulate import simulate               # noqa: E402
+from shared_utils import theme                              # noqa: E402
 
 _DEFAULT_OUTPUT_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "validation_output"

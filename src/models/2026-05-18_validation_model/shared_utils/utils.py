@@ -4,8 +4,8 @@ Shared utilities for the Simple Assembly Factory model.
 Import from any script:
 
     import sys, os
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-    import utils
+    sys.path.insert(0, <model_root>)
+    from shared_utils import utils
 
     cfg = utils.load_config()          # default: config.yaml next to this file
     cfg = utils.load_config(some_path) # explicit path
@@ -15,7 +15,7 @@ import os
 
 import yaml
 
-_MODEL_ROOT     = os.path.dirname(os.path.abspath(__file__))
+_MODEL_ROOT     = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _DEFAULT_CONFIG = os.path.join(_MODEL_ROOT, "config.yaml")
 
 

@@ -21,15 +21,15 @@ import sys
 import time
 
 # ── Path setup ─────────────────────────────────────────────────────────────────
-_MODEL_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+_MODEL_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
 sys.path.insert(0, _MODEL_ROOT)
 
 # ── Import validation modules ──────────────────────────────────────────────────
 # (lazy imports so a broken sub-module doesn't crash the orchestrator)
-from validate import conservation as conservation  # noqa: E402
-from validate import boundary     as boundary      # noqa: E402
-from validate import monotonicity as monotonicity  # noqa: E402
-from validate import statistical  as statistical   # noqa: E402
+from . import conservation  # noqa: E402
+from . import boundary      # noqa: E402
+from . import monotonicity  # noqa: E402
+from . import statistical   # noqa: E402
 
 
 # ── Formatting helpers ─────────────────────────────────────────────────────────
