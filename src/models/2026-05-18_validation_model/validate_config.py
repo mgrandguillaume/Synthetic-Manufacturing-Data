@@ -132,11 +132,13 @@ def validate(cfg: dict) -> None:
         )
 
     # ── Configurations ────────────────────────────────────────────────────────
-    ppc = cc.get("producers_per_component", [None, None])
-    pt  = cc.get("processing_time",         [None, None])
-    st  = cc.get("setup_time",              [None, None])
-    sc  = cc.get("setup_cost",              [None, None])
-    oc  = cc.get("operating_cost",          [None, None])
+    ppc           = cc.get("producers_per_component", [None, None])
+    assembly_type = cc.get("assembly_type")
+    variation     = cc.get("variation", 0.10)
+    pt            = cc.get("processing_time", [None, None])
+    st            = cc.get("setup_time",      [None, None])
+    sc            = cc.get("setup_cost",      [None, None])
+    oc            = cc.get("operating_cost",  [None, None])
 
     if ppc[0] is None or ppc[0] < 1:
         err(f"configurations.producers_per_component[0] (min) must be >= 1  (got {ppc[0]})")
@@ -146,7 +148,28 @@ def validate(cfg: dict) -> None:
             f"(got [{ppc[0]}, {ppc[1]}])"
         )
 
-    _range("configurations.processing_time", pt[0], pt[1], pos=True)
+    # Processing time: either formula-based (assembly_type) or explicit range.
+    _VALID_ASSEMBLY_TYPES = ("low", "medium", "high")
+    if assembly_type is not None:
+        if assembly_type not in _VALID_ASSEMBLY_TYPES:
+            err(
+                f"configurations.assembly_type must be one of "
+                f"{list(_VALID_ASSEMBLY_TYPES)}  (got '{assembly_type}')"
+            )
+        if not isinstance(variation, (int, float)) or not (0.0 < variation < 1.0):
+            err(
+                f"configurations.variation must be a fraction in (0, 1)  "
+                f"(got {variation})  — e.g. 0.10 for ±10%"
+            )
+    elif pt[0] is not None or pt[1] is not None:
+        # Legacy explicit range still supported.
+        _range("configurations.processing_time", pt[0], pt[1], pos=True)
+    else:
+        err(
+            "configurations must specify either 'assembly_type' (formula-based) "
+            "or 'processing_time' (explicit [min, max] range)"
+        )
+
     _range("configurations.setup_time",      st[0], st[1])
     _range("configurations.setup_cost",      sc[0], sc[1])
     _range("configurations.operating_cost",  oc[0], oc[1])

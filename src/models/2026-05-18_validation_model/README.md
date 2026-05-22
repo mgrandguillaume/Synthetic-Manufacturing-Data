@@ -31,6 +31,8 @@ This model generates and simulates a small synthetic assembly factory driven by 
   - [Check groups](#check-groups)
   - [Output files](#output-files-3)
   - [Visualize](#visualize-1)
+- [Use Cases](#use-cases)
+  - [Availability analysis](#availability-analysis)
 - [Model Limitations](#model-limitations)
   - [Greedy, non-anticipating scheduler](#greedy-non-anticipating-scheduler)
   - [No stochasticity during simulation execution](#no-stochasticity-during-simulation-execution)
@@ -196,10 +198,37 @@ For each producible component at BOM level *l*, the generator randomly selects b
 | Parameter | Description |
 |---|---|
 | `producers_per_component` | `[min, max]` — how many workstations can produce each component; clamped to the stage size |
-| `processing_time` | `[min, max]` hours — time to produce one unit; sampled per (workstation, component) pair |
+| `assembly_type` | `"low"`, `"medium"`, or `"high"` — sets the (α, β) coefficients for the processing-time formula (see below). Mutually exclusive with `processing_time`. |
+| `variation` | Fractional spread around the formula value, e.g. `0.10` for ±10 %. Each (workstation, component) pair is sampled independently within this band. Default: `0.10`. |
+| `processing_time` | `[min, max]` hours — legacy explicit range. Used only when `assembly_type` is absent. |
 | `setup_time` | `[min, max]` hours — changeover time when switching to this component; sampled per pair |
 | `setup_cost` | `[min, max]` — cost charged once per changeover; sampled per pair |
 | `operating_cost` | `[min, max]` — cost per unit produced; sampled per pair |
+
+**Processing-time formula**
+
+When `assembly_type` is set, processing time is derived from the BOM depth using an exponential approximation:
+
+```
+processing_time = α · depth^β   ±  variation
+```
+
+`depth` is the same value used for BOM construction, so deeper factories automatically produce components that take longer to assemble. The (α, β) coefficients by assembly type are:
+
+| `assembly_type` | α | β |
+|---|---|---|
+| `low` | 0.33 | 1.39 |
+| `medium` | 0.28 | 1.45 |
+| `high` | 0.12 | 1.79 |
+
+For example, with `assembly_type: medium`, `depth: 5`, and `variation: 0.10`:
+
+```
+pt_mean = 0.28 × 5^1.45 ≈ 2.89 h
+pt_range = [2.89 × 0.90,  2.89 × 1.10] = [2.60 h,  3.18 h]
+```
+
+Each configuration is then sampled uniformly from this range, preserving workstation heterogeneity.
 
 ---
 
@@ -602,6 +631,28 @@ Reads the four CSVs from `validation_output/` and shows three diagnostic charts 
 
 ---
 
+## Use Cases
+
+The `use_cases/` directory contains standalone analyses that run on top of the generated factory and simulation data. Each use case has its own script and README.
+
+### Availability analysis
+
+**Location:** `use_cases/availability_analysis/`  
+**Entry point:** `python use_cases/availability_analysis/availability.py`  
+**README:** [`use_cases/availability_analysis/README.md`](use_cases/availability_analysis/README.md)
+
+Compares three approaches to computing steady-state system availability for the generated factory:
+
+| Approach | Description |
+|---|---|
+| **Theoretical (midpoint)** | Weibull MTTF computed from the midpoint of each parameter range; exact 2^N workstation-state enumeration propagated through the factory's RBD topology |
+| **Theoretical (integrated)** | Same state enumeration, but E[A_ws] is evaluated by numerical integration over the full (β, λ, MTTR) parameter distributions — corrects for Jensen's inequality |
+| **Experimental** | Monte Carlo: 1 000 replications of the full Weibull failure–repair cycle, aggregated into an empirical availability distribution |
+
+The script produces a three-panel figure (histogram of experimental replications with both theoretical lines; per-component availability bar chart; system-level summary) and prints a comparison table to stdout. See the use case README for a full explanation of the methodology and how to interpret the results.
+
+---
+
 ## Model Limitations
 
 This section documents the known simplifications and assumptions built into the model. Understanding these is important when interpreting simulation results or deciding whether the generated data is suitable for a given research question.
@@ -620,7 +671,7 @@ Raw materials (BOM level 0) are given an effectively infinite stock and are neve
 
 ### Machine failures — partially addressed
 
-This model adds stochastic machine failures (see the **Machine failures** subsection above). Each workstation can break down mid-job with a configurable probability per tick, and requires a randomly sampled repair duration before returning to service. However, the model still does not include **scheduled preventive maintenance** windows or **gradual performance degradation** over time. Failures are purely random (exponential inter-arrival times) and every repair restores the machine to full speed — there is no wear-and-tear model.
+This model adds stochastic machine failures (see the **Machine failures** subsection above). Each workstation can break down mid-job and requires a randomly sampled repair duration before returning to service. The failure model uses a **Weibull distribution**: with β > 1, older machines fail more often (wear-out behaviour), so this is not a purely random, memoryless process. However, age only accumulates during active work (setup or processing) — a workstation does not age while it is idle, starved, or blocked, which underestimates wear relative to calendar-time degradation. Every repair still performs a **perfect restoration**: the machine resets to age zero and draws a fresh time-to-failure, with no residual damage or gradual performance loss. The model also does not include **scheduled preventive maintenance** windows.
 
 ### No labour or operator constraints
 

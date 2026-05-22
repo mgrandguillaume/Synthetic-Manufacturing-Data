@@ -59,6 +59,44 @@ class LayoutEdge:
     cost: float
 
 
+# ── Assembly-type processing-time formula ─────────────────────────────────────
+#
+#   processing_time = α · depth^β   (exponential approximation)
+#
+#   α and β depend on the assembly complexity chosen in config.yaml:
+#
+#     assembly_type   α       β
+#     low             0.33    1.39
+#     medium          0.28    1.45
+#     high            0.12    1.79
+#
+#   A ±variation fraction is applied around this mean to preserve workstation
+#   heterogeneity (option B), so each configuration still gets its own sample.
+
+_ASSEMBLY_PARAMS: dict[str, tuple[float, float]] = {
+    "low":    (0.33, 1.39),
+    "medium": (0.28, 1.45),
+    "high":   (0.12, 1.79),
+}
+
+
+def _pt_range(assembly_type: str, depth: int, variation: float) -> list[float]:
+    """
+    Return a [min, max] processing-time range from the assembly formula.
+
+    processing_time = α · depth^β  ±  variation fraction
+
+    Parameters
+    ----------
+    assembly_type : "low" | "medium" | "high"
+    depth         : BOM depth (the C in the formula)
+    variation     : fractional spread, e.g. 0.10 for ±10 %
+    """
+    alpha, beta = _ASSEMBLY_PARAMS[assembly_type]
+    pt_mean = alpha * (depth ** beta)
+    return [pt_mean * (1.0 - variation), pt_mean * (1.0 + variation)]
+
+
 # ── Stage-size helper ──────────────────────────────────────────────────────────
 
 def _sample_stage_sizes(n_ws: int, depth: int,
@@ -445,6 +483,16 @@ def generate_simple_assembly(config_path: str, export_csv: bool = True) -> dict:
     cc  = cfg["configurations"]
     lay = cfg["layout"]
 
+    # Resolve processing-time range: formula-based or legacy explicit range.
+    if "assembly_type" in cc:
+        pt_range = _pt_range(
+            assembly_type = cc["assembly_type"],
+            depth         = bom["depth"],
+            variation     = cc.get("variation", 0.10),
+        )
+    else:
+        pt_range = cc["processing_time"]
+
     params = {
         "seed":                    cfg["metadata"].get("seed"),
         "n_products":              bom["n_products"],
@@ -455,7 +503,7 @@ def generate_simple_assembly(config_path: str, export_csv: bool = True) -> dict:
         "workstations_count":      ws["count"],
         "stage_balance":           ws.get("stage_balance", None),
         "producers_per_component": cc["producers_per_component"],
-        "processing_time":         cc["processing_time"],
+        "processing_time":         pt_range,
         "setup_time":              cc["setup_time"],
         "setup_cost":              cc["setup_cost"],
         "operating_cost":          cc["operating_cost"],
