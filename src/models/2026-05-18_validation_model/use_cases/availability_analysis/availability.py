@@ -40,7 +40,7 @@ sys.path.insert(0, _MODEL_ROOT)
 import utils
 import validate_config
 from generate.generate import generate_simple_assembly
-from use_cases.availability_analysis import theoretical, experimental
+from use_cases.availability_analysis import theoretical, theoretical_integrated, experimental
 import theme
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -102,8 +102,11 @@ def run() -> None:
     print(f"  {n_ws} production workstations, {n_comps} producible components")
 
     # ── Theoretical ───────────────────────────────────────────────────────────
-    print("\nComputing theoretical availability...")
-    theo = theoretical.compute(gen_result, fail_cfg)
+    print("\nComputing theoretical availability (midpoint)...")
+    theo_mid = theoretical.compute(gen_result, fail_cfg)
+
+    print("Computing theoretical availability (integrated)...")
+    theo_int = theoretical_integrated.compute(gen_result, fail_cfg)
 
     # ── Experimental ─────────────────────────────────────────────────────────
     print(
@@ -122,43 +125,48 @@ def run() -> None:
     print("  Done.")
 
     # ── Console report ────────────────────────────────────────────────────────
+    ci_lo, ci_hi = exp["A_sys_ci95"]
+
     _print_separator("=")
     print("  SYSTEM AVAILABILITY ANALYSIS")
     _print_separator("=")
 
-    print(f"\n  Weibull parameters (representative midpoints)")
-    print(f"    beta   = {theo['beta_rep']:.3f}")
-    print(f"    lambda = {theo['lambda_rep']:.1f} h")
-    print(f"    MTTF   = {theo['MTTF_h']:.2f} h  per workstation")
-    print(f"    MTTR   = {theo['MTTR_h']:.2f} h  per workstation")
-    print(f"    A_ws   = {_fmt_pct(theo['A_ws'])}  per workstation")
-    print(f"    method = {theo['method']}")
+    print(f"\n  Weibull parameters")
+    print(f"    beta          = {theo_mid['beta_rep']:.3f}  (range {fail_cfg['weibull_beta']})")
+    print(f"    lambda        = {theo_mid['lambda_rep']:.1f} h  (range {fail_cfg['weibull_lambda']})")
+    print(f"    MTTF          = {theo_mid['MTTF_h']:.2f} h  per workstation  (at midpoint)")
+    print(f"    MTTR          = {theo_mid['MTTR_h']:.2f} h  per workstation  (midpoint)")
+    print(f"    A_ws midpoint = {_fmt_pct(theo_mid['A_ws'])}")
+    print(f"    A_ws integrated = {_fmt_pct(theo_int['A_ws'])}")
 
     _print_separator()
-    print(f"  {'':30s}  {'Theoretical':>12s}  {'Experimental':>12s}")
+    print(f"  {'':30s}  {'Midpoint':>10s}  {'Integrated':>10s}  {'Experimental':>12s}")
     _print_separator()
     print(
         f"  {'System availability  A_sys':30s}  "
-        f"{_fmt_pct(theo['A_sys']):>12s}  "
+        f"{_fmt_pct(theo_mid['A_sys']):>10s}  "
+        f"{_fmt_pct(theo_int['A_sys']):>10s}  "
         f"{_fmt_pct(exp['A_sys_mean']):>12s}"
     )
-    ci_lo, ci_hi = exp["A_sys_ci95"]
     print(
         f"  {'95% CI (experimental)':30s}  "
-        f"{'--':>12s}  "
+        f"{'--':>10s}  "
+        f"{'--':>10s}  "
         f"[{_fmt_pct(ci_lo)}, {_fmt_pct(ci_hi)}]"
     )
     print(
         f"  {'Std dev (across runs)':30s}  "
-        f"{'--':>12s}  "
+        f"{'--':>10s}  "
+        f"{'--':>10s}  "
         f"{_fmt_pct(exp['A_sys_std']):>12s}"
     )
     _print_separator()
-    print(f"  Verdict: {_divergence_verdict(theo['A_sys'], ci_lo, ci_hi)}")
+    print(f"  Verdict (midpoint):   {_divergence_verdict(theo_mid['A_sys'], ci_lo, ci_hi)}")
+    print(f"  Verdict (integrated): {_divergence_verdict(theo_int['A_sys'], ci_lo, ci_hi)}")
     _print_separator()
 
     print(f"\n  Top 5 weakest components (bottlenecks):")
-    for comp_id, A_c in theo["bottlenecks"][:5]:
+    for comp_id, A_c in theo_int["bottlenecks"][:5]:
         n_capable = sum(
             1 for c in gen_result["configurations"]
             if c.component == comp_id
@@ -170,11 +178,15 @@ def run() -> None:
     _print_separator("=")
 
     # ── Visualisation ─────────────────────────────────────────────────────────
-    _show_plots(theo, exp, gen_result)
+    _show_plots(theo_mid, theo_int, exp, gen_result)
 
 
-def _show_plots(theo: dict, exp: dict, gen_result: dict) -> None:
+def _show_plots(theo_mid: dict, theo_int: dict, exp: dict, gen_result: dict) -> None:
     """Build and display a three-panel Plotly figure."""
+
+    # Colour aliases for the two theoretical lines
+    COL_MID = theme.STATE_COLORS["setup"]    # amber — midpoint
+    COL_INT = theme.STATE_COLORS["failed"]   # red   — integrated
 
     fig = make_subplots(
         rows=2, cols=2,
@@ -222,17 +234,26 @@ def _show_plots(theo: dict, exp: dict, gen_result: dict) -> None:
             annotation_font=dict(color=theme.SUBTEXT, size=9),
             annotation_position=pos,
         )
-    # Theoretical value
+    # Midpoint theoretical
     fig.add_vline(
-        x=theo["A_sys"], row=1, col=1,
-        line=dict(color=theme.STATE_COLORS["failed"], width=2.5, dash="dash"),
-        annotation_text=f"Theoretical: {theo['A_sys']*100:.3f}%",
-        annotation_font=dict(color=theme.STATE_COLORS["failed"], size=10),
+        x=theo_mid["A_sys"], row=1, col=1,
+        line=dict(color=COL_MID, width=2, dash="dash"),
+        annotation_text=f"Midpoint: {theo_mid['A_sys']*100:.3f}%",
+        annotation_font=dict(color=COL_MID, size=10),
         annotation_position="top left",
+    )
+    # Integrated theoretical
+    fig.add_vline(
+        x=theo_int["A_sys"], row=1, col=1,
+        line=dict(color=COL_INT, width=2, dash="dash"),
+        annotation_text=f"Integrated: {theo_int['A_sys']*100:.3f}%",
+        annotation_font=dict(color=COL_INT, size=10),
+        annotation_position="bottom left",
     )
 
     # ── (2) Component bottleneck bar chart ────────────────────────────────────
-    sorted_comps = sorted(theo["A_per_component"].items(), key=lambda kv: kv[1])
+    # Use integrated theoretical for per-component values (more accurate A_ws)
+    sorted_comps = sorted(theo_int["A_per_component"].items(), key=lambda kv: kv[1])
 
     comp_n_producers = {}
     for c in gen_result["configurations"]:
@@ -261,11 +282,19 @@ def _show_plots(theo: dict, exp: dict, gen_result: dict) -> None:
         ),
     ), row=2, col=1)
 
+    # Both theoretical system lines
     fig.add_hline(
-        y=theo["A_sys"], row=2, col=1,
-        line=dict(color=theme.STATE_COLORS["failed"], width=1.5, dash="dot"),
-        annotation_text=f"A_sys = {theo['A_sys']*100:.3f}%",
-        annotation_font=dict(color=theme.STATE_COLORS["failed"], size=9),
+        y=theo_mid["A_sys"], row=2, col=1,
+        line=dict(color=COL_MID, width=1.5, dash="dot"),
+        annotation_text=f"Midpoint {theo_mid['A_sys']*100:.3f}%",
+        annotation_font=dict(color=COL_MID, size=9),
+        annotation_position="top right",
+    )
+    fig.add_hline(
+        y=theo_int["A_sys"], row=2, col=1,
+        line=dict(color=COL_INT, width=1.5, dash="dot"),
+        annotation_text=f"Integrated {theo_int['A_sys']*100:.3f}%",
+        annotation_font=dict(color=COL_INT, size=9),
         annotation_position="bottom right",
     )
 
@@ -308,16 +337,24 @@ def _show_plots(theo: dict, exp: dict, gen_result: dict) -> None:
         y=rolling_avail,
         mode="lines",
         name=f"Rolling avg (window={window})",
-        line=dict(color=theme.STATE_COLORS["setup"], width=2),
+        line=dict(color=theme.STATE_COLORS["processing"], width=2),
         showlegend=True,
         hovertemplate="t = %{x:.1f} h<br>Rolling A = %{y:.4f}<extra></extra>",
     ), row=2, col=2)
 
+    # Both theoretical lines on the timeline
     fig.add_hline(
-        y=theo["A_sys"], row=2, col=2,
-        line=dict(color=theme.STATE_COLORS["failed"], width=1.5, dash="dash"),
-        annotation_text=f"Theoretical {theo['A_sys']*100:.3f}%",
-        annotation_font=dict(color=theme.STATE_COLORS["failed"], size=9),
+        y=theo_mid["A_sys"], row=2, col=2,
+        line=dict(color=COL_MID, width=1.5, dash="dash"),
+        annotation_text=f"Midpoint {theo_mid['A_sys']*100:.3f}%",
+        annotation_font=dict(color=COL_MID, size=9),
+        annotation_position="top right",
+    )
+    fig.add_hline(
+        y=theo_int["A_sys"], row=2, col=2,
+        line=dict(color=COL_INT, width=1.5, dash="dash"),
+        annotation_text=f"Integrated {theo_int['A_sys']*100:.3f}%",
+        annotation_font=dict(color=COL_INT, size=9),
         annotation_position="bottom right",
     )
 

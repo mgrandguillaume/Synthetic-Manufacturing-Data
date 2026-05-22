@@ -75,7 +75,7 @@ simulation:
 failures:
   enabled:         true          # true / false
   weibull_beta:   [1.5,  3.0]   # Weibull shape β per workstation (β > 1 = wear-out)
-  weibull_lambda: [20,   100]   # Weibull scale λ per workstation (characteristic life, hours)
+  weibull_lambda: [20,   50]   # Weibull scale λ per workstation (characteristic life, hours)
   mttr:           [0.5,  4.0]   # repair duration per failure event (hours)
   repair_cost:    [100,  500]   # cost charged per failure event
 
