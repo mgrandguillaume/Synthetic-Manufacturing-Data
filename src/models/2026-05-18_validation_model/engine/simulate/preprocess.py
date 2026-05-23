@@ -173,6 +173,26 @@ def preprocess(
     prod_explosions     = [_explode(p.id) for p in products]
     max_comps_per_order = max((len(e) for e in prod_explosions), default=1)
 
+    # ── Guard: buffer_capacity must be ≥ every exploded demand quantity ────────
+    # The BOM explosion accumulates total quantities needed per component for a
+    # single order (e.g. 12 × COMP_L1_1).  The deposit check in the tick loop
+    # is `stock + qty <= buffer_capacity`; if qty > buffer_capacity the
+    # workstation is blocked *permanently* (even with an empty buffer), causing
+    # deadlock and zero throughput.  Auto-scale upward so this cannot happen.
+    if prod_explosions:
+        max_demand_qty = max(
+            qty
+            for explosion in prod_explosions
+            for qty in explosion.values()
+        )
+        if max_demand_qty > buffer_capacity:
+            print(
+                f"[preprocess] WARNING: buffer_capacity={buffer_capacity} is smaller "
+                f"than the largest exploded demand quantity ({max_demand_qty}). "
+                f"Auto-scaling buffer_capacity -> {max_demand_qty} to prevent deadlock."
+            )
+            buffer_capacity = max_demand_qty
+
     expl_comps = np.full((n_products, max_comps_per_order), -1, dtype=np.int32)
     expl_qtys  = np.zeros((n_products, max_comps_per_order),    dtype=np.int32)
     expl_n     = np.zeros(n_products,                           dtype=np.int32)

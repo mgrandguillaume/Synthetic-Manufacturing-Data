@@ -3,7 +3,7 @@ metadata:
   seed: 43
 bom:
   n_products: 5
-  depth: 5
+  depth: 3
   branching:
   - 2
   - 3
