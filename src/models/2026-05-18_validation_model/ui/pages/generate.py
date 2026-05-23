@@ -1,9 +1,38 @@
 """Generate page — build a factory and inspect the result."""
 
+import os
+import time
 import yaml
 import dash
 from dash import html, dcc, Input, Output, State, callback, dash_table
 import store
+
+# The vis.js HTML is large and contains non-ASCII bytes that break Dash's
+# cp1252 JSON response pipeline on Windows.  Write it as a UTF-8 file in
+# assets/ and load via iframe src URL instead of srcDoc.
+_ASSETS_DIR        = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets")
+_LAYOUT_HTML_PATH  = os.path.join(_ASSETS_DIR, "factory_layout.html")
+_LAYOUT_HTML_URL   = "/assets/factory_layout.html"
+
+
+def _write_layout_html(result) -> None:
+    """Write the vis.js factory layout HTML to assets/factory_layout.html."""
+    from engine.generate.visualize_gen import build_html
+    html_str = build_html(result, height="600px")
+    os.makedirs(_ASSETS_DIR, exist_ok=True)
+    with open(_LAYOUT_HTML_PATH, "w", encoding="utf-8") as fh:
+        fh.write(html_str)
+
+
+def _layout_iframe() -> html.Iframe:
+    """Return an Iframe pointing at the pre-written layout HTML asset."""
+    # Cache-busting query param so the browser reloads after each generation.
+    t = int(time.time())
+    return html.Iframe(
+        src=f"{_LAYOUT_HTML_URL}?t={t}",
+        style={"width": "100%", "height": "620px",
+               "border": "1px solid #d9d9d4", "borderRadius": "2px"},
+    )
 
 dash.register_page(__name__, path="/generate", title="Generate")
 
@@ -47,7 +76,7 @@ def _render_results(result) -> list:
     ws_    = result["workstations"]
     cfgs   = result["configurations"]
 
-    from engine.generate.visualize_gen import build_html
+    _write_layout_html(result)   # write UTF-8 file to assets/
 
     return [
         html.Hr(className="divider"),
@@ -113,14 +142,10 @@ def _render_results(result) -> list:
                     )),
         ], className="tab-list-container", content_className="tab-content"),
 
-        # Factory layout
+        # Factory layout — written to assets/ to avoid Dash's JSON/cp1252 pipeline
         html.Hr(className="divider"),
         html.H2("Factory layout"),
-        html.Iframe(
-            srcDoc=build_html(result, height="600px"),
-            style={"width": "100%", "height": "620px",
-                   "border": "1px solid #d9d9d4", "borderRadius": "2px"},
-        ),
+        _layout_iframe(),
     ]
 
 

@@ -40,7 +40,6 @@ Dependencies
 
 import json
 import os
-import tempfile
 import webbrowser
 from collections import defaultdict, deque
 
@@ -314,14 +313,10 @@ def build_html(gen_result: dict, height: str = "600px") -> str:
             smooth={"type": "curvedCW", "roundness": 0.08},
         )
 
-    # ── Write to temp file, read back, post-process ───────────────────────────
-    with tempfile.NamedTemporaryFile(suffix=".html", delete=False, mode="w",
-                                     encoding="utf-8") as tmp:
-        tmp_path = tmp.name
-    net.write_html(tmp_path)
-    with open(tmp_path, "r", encoding="utf-8") as fh:
-        html = fh.read()
-    os.unlink(tmp_path)
+    # ── Generate HTML string directly (no temp file) ──────────────────────────
+    # generate_html() returns the HTML as a Python str without any file I/O,
+    # avoiding the Windows cp1252 encoding issue that write_html() triggers.
+    html = net.generate_html()
 
     # Enable vis.js hover events (pyvis doesn't set this flag by default)
     html = html.replace(
