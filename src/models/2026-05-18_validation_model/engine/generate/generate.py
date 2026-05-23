@@ -21,13 +21,15 @@ import os
 import random
 import sys
 
-# Add the model root to sys.path so shared_utils is importable
-# whether this file is run directly or imported as part of a package.
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+# ── Path setup ─────────────────────────────────────────────────────────────────
+_HERE       = os.path.dirname(os.path.abspath(__file__))
+_MODEL_ROOT = os.path.normpath(os.path.join(_HERE, "..", ".."))
+if _MODEL_ROOT not in sys.path:
+    sys.path.insert(0, _MODEL_ROOT)
 
-from shared_utils import utils          # noqa: E402
-from . import factory                   # noqa: E402
-from .models import write_csvs          # noqa: E402
+from shared_utils import utils                  # noqa: E402
+from engine.generate import factory             # noqa: E402
+from engine.generate.models import write_csvs   # noqa: E402
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────

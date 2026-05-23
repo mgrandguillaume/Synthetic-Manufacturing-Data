@@ -30,9 +30,15 @@ import sys
 
 import pandas as pd
 
-from .preprocess import preprocess
-from .tick_loop  import _numba_tick_loop
-from .postprocess import postprocess
+# ── Path setup ─────────────────────────────────────────────────────────────────
+_HERE       = os.path.dirname(os.path.abspath(__file__))
+_MODEL_ROOT = os.path.normpath(os.path.join(_HERE, "..", ".."))
+if _MODEL_ROOT not in sys.path:
+    sys.path.insert(0, _MODEL_ROOT)
+
+from engine.simulate.preprocess  import preprocess          # noqa: E402
+from engine.simulate.tick_loop   import _numba_tick_loop    # noqa: E402
+from engine.simulate.postprocess import postprocess         # noqa: E402
 
 
 # ── Public simulate() ──────────────────────────────────────────────────────────
