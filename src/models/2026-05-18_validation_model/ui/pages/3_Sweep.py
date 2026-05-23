@@ -14,6 +14,7 @@ if _UI_DIR     not in sys.path: sys.path.insert(0, _UI_DIR)
 if _MODEL_ROOT not in sys.path: sys.path.insert(0, _MODEL_ROOT)
 
 import state
+import ui_theme
 state.setup_path()
 
 from analysis.sweep.sweep          import main as run_sweep
@@ -22,8 +23,11 @@ from analysis.sweep.visualize_sweep import show as sweep_show
 _SWEEP_DIR = os.path.join(_MODEL_ROOT, "analysis", "sweep", "sweep_output")
 
 # ── Page ───────────────────────────────────────────────────────────────────────
-st.title("📊 Parameter Sweep")
-st.caption("Reads sweep grid from `config.yaml → sweep:` and simulation parameters from `config.yaml → simulation:`.")
+ui_theme.apply(
+    title   = "Parameter sweep",
+    eyebrow = "analyse · sweep",
+)
+st.caption("Reads grid from config.yaml → sweep: and simulation parameters from config.yaml → simulation:")
 
 # ── Sweep grid preview ─────────────────────────────────────────────────────────
 with open(state.CONFIG_PATH) as f:
@@ -47,7 +51,7 @@ def _expand(val):
 expanded = {k: _expand(v) for k, v in sweep_cfg.items()}
 n_combinations = len(list(itertools.product(*expanded.values()))) if expanded else 0
 
-st.subheader("Sweep grid")
+st.markdown("## Sweep grid")
 col1, col2 = st.columns([2, 1])
 with col1:
     rows = [{"Parameter": k, "Values": str(vals), "Count": len(vals)}
@@ -60,7 +64,7 @@ with col2:
 
 # ── Run button ─────────────────────────────────────────────────────────────────
 st.divider()
-if st.button("📊 Run sweep", type="primary", use_container_width=True):
+if st.button("Run sweep", type="primary", use_container_width=True):
     with st.spinner(f"Running {n_combinations:,} combinations — this may take several minutes…"):
         run_sweep()
     state.set("sweep_done", True)
@@ -76,11 +80,11 @@ if state.get("sweep_done"):
             fig = sweep_show(_SWEEP_DIR)
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.info("Click **Run sweep** to generate results.")
+        st.info("Click Run sweep to generate results.")
 elif os.path.isdir(_SWEEP_DIR) and os.path.exists(os.path.join(_SWEEP_DIR, "gen_stats.csv")):
-    st.info("Previous sweep output found on disk. Click **Run sweep** to refresh, or expand to view existing charts.")
-    if st.button("📈 Show existing charts"):
+    st.info("Previous sweep output found on disk. Click Run sweep to refresh, or load the existing charts.")
+    if st.button("Show existing charts"):
         state.set("sweep_done", True)
         st.rerun()
 else:
-    st.info("Click **Run sweep** to generate results.")
+    st.info("Click Run sweep to generate results.")

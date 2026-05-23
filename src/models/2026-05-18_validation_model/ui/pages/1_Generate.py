@@ -15,6 +15,7 @@ if _UI_DIR     not in sys.path: sys.path.insert(0, _UI_DIR)
 if _MODEL_ROOT not in sys.path: sys.path.insert(0, _MODEL_ROOT)
 
 import state
+import ui_theme
 state.setup_path()
 
 from engine.generate.generate      import generate_simple_assembly, generate_from_params
@@ -22,7 +23,11 @@ from engine.generate.factory       import pt_range
 from engine.generate.visualize_gen import build_html
 
 # ── Page ───────────────────────────────────────────────────────────────────────
-st.title("🏗️ Generate")
+ui_theme.apply(
+    title   = "Generate factory",
+    eyebrow = "engine · generate",
+)
+st.caption("Build a factory structure from config.yaml or custom values.")
 
 # ── Source selector ────────────────────────────────────────────────────────────
 use_config = st.toggle("Use config.yaml values", value=True)
@@ -39,7 +44,7 @@ meta = cfg.get("metadata", {})
 
 # ── Parameter form (shown only in custom mode) ────────────────────────────────
 if not use_config:
-    st.subheader("Parameters")
+    ui_theme.section("Parameters", meta="custom override")
     col1, col2 = st.columns(2)
 
     with col1:
@@ -95,7 +100,7 @@ else:
 
 # ── Generate button ────────────────────────────────────────────────────────────
 st.divider()
-if st.button("🏗️ Generate factory", type="primary", use_container_width=True):
+if st.button("Generate factory", type="primary", use_container_width=True):
     with st.spinner("Generating factory…"):
         if use_config:
             result = generate_simple_assembly(state.CONFIG_PATH, export_csv=True)
@@ -124,20 +129,20 @@ if st.button("🏗️ Generate factory", type="primary", use_container_width=Tru
 # ── Display results ────────────────────────────────────────────────────────────
 result = state.get("gen_result")
 if result is None:
-    st.info("Click **Generate factory** to build a factory.")
+    st.info("Click Generate factory to build a factory.")
     st.stop()
 
 st.divider()
-st.subheader("Summary")
+st.markdown("## Summary")
 m1, m2, m3, m4, m5 = st.columns(5)
-m1.metric("Components",    len(result["components"]))
-m2.metric("BOM edges",     len(result["bom_edges"]))
-m3.metric("Workstations",  len(result["workstations"]))
-m4.metric("Configurations",len(result["configurations"]))
-m5.metric("Layout edges",  len(result["layout_edges"]))
+m1.metric("Components",     len(result["components"]))
+m2.metric("BOM edges",      len(result["bom_edges"]))
+m3.metric("Workstations",   len(result["workstations"]))
+m4.metric("Configurations", len(result["configurations"]))
+m5.metric("Layout edges",   len(result["layout_edges"]))
 
 tab_comp, tab_cfg, tab_bom, tab_ws = st.tabs(
-    ["Components", "Configurations", "BOM edges", "Workstations"])
+    ["components", "configurations", "bom edges", "workstations"])
 
 with tab_comp:
     st.dataframe(pd.DataFrame([
@@ -167,5 +172,5 @@ with tab_ws:
 
 # ── Factory layout graph ───────────────────────────────────────────────────────
 st.divider()
-st.subheader("Factory layout")
+st.markdown("## Factory layout")
 components.html(build_html(result, height="600px"), height=620, scrolling=False)

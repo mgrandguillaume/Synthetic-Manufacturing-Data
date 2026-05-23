@@ -11,6 +11,7 @@ Builds a synthetic assembly factory from a set of parameters and exports it as f
 | `models.py` | Dataclass definitions and CSV export |
 | `factory.py` | All factory construction logic |
 | `generate.py` | Public API and script entry point |
+| `visualize_gen.py` | vis.js layout visualizer — `build_html(gen_result) -> str` for the UI; runnable standalone to write `gen_output/layout_graph.html` |
 
 ---
 

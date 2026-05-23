@@ -2,6 +2,18 @@
 
 This model generates and simulates a small synthetic assembly factory driven by a single config file (`config.yaml`). Running **Generate** first produces the factory structure; running **Simulate** replays production orders through it using a Discrete-Time Simulation. Running **Sweep** repeats this across a grid of structural parameters for analysis.
 
+## Running the UI
+
+The primary interface is a Streamlit web app. From the model root directory:
+
+```bash
+streamlit run ui/home.py
+# or
+python -m 2026-05-18_validation_model   # from src/models/
+```
+
+The sidebar groups pages into **Engine** (Generate, Simulate) and **Analyse** (Sweep, Validate, Availability). The **Configure** page lets you edit `config.yaml` directly without leaving the browser. All sections below describe the underlying logic; see the UI for the interactive interface.
+
 ---
 
 ## Contents
@@ -49,11 +61,14 @@ This model generates and simulates a small synthetic assembly factory driven by 
 
 ## Generate
 
-**Script:** `generate/generate.py`  
-**Dependency:** `pip install pyyaml`  
-**Run:** `python generate/generate.py`
+The generator builds a complete factory description from `config.yaml` and writes five CSV files to `engine/generate/gen_output/`. Run it from the **Generate** page in the UI, or call it directly:
 
-The generator builds a complete factory description from `config.yaml` and writes five CSV files to `generate/gen_output/`. Generation proceeds in six sequential steps:
+```python
+from engine.generate.generate import generate_simple_assembly
+result = generate_simple_assembly("config.yaml", export_csv=True)
+```
+
+Generation proceeds in six sequential steps:
 
 1. **BOM tree construction** — build the component hierarchy top-down from each product down to raw materials
 2. **Ownership renaming** — append a product-ownership suffix to every non-product component ID
@@ -294,11 +309,14 @@ Example: WS_1 produces COMP_L1_1_(P1), WS_3 assembles PROD_1
 
 ## Simulate
 
-**Script:** `simulate/simulate.py`  
-**Dependency:** `pip install pandas pyyaml numba`  
-**Run:** `python simulate/simulate.py`
+> This model supports optional **machine failures**. Enable them in the `failures:` section of `config.yaml`.
 
-> This model extends the optimized model with **machine failures**. Enable them in the `failures:` section of `config.yaml`.
+Run the simulation from the **Simulate** page in the UI (requires a prior Generate run), or call it directly:
+
+```python
+from engine.simulate.simulate import simulate
+results = simulate(gen_result, n_orders=10, ...)
+```
 
 The simulator reads the five CSVs produced by Generate and replays a series of production orders through the factory. It uses a **Discrete-Time Simulation (DTS)** approach: time advances in fixed steps called *ticks*, and every workstation is evaluated simultaneously at each tick. This allows multiple workstations to produce different components at the same time (concurrency), and captures two failure modes that a purely sequential scheduler cannot see:
 
@@ -468,28 +486,16 @@ Each workstation spends every tick in exactly one of six states. At the end of t
 
 ## Sweep
 
-**Script:** `sweep.py`  
-**Dependencies:** `pip install pyyaml pandas`  
-**Run:** `python sweep.py`
+The sweep runs Generate and Simulate for every combination of parameters defined in `config.yaml → sweep:` and collects all outputs into aggregated CSVs. Run it from the **Sweep** page in the UI, or call it directly:
 
-The sweep runs Generate and Simulate for every combination of a set of structural parameters, and collects all outputs into aggregated CSVs. This allows the effect of each parameter on factory performance to be studied across the full parameter space.
+```python
+from analysis.sweep.sweep import main as run_sweep
+run_sweep()
+```
 
 ### Parameter groups
 
-The sweep uses three parameter groups:
-
-**`PARAM_GRID`** — the parameters that are swept. Every combination is tested (81 runs total):
-
-| Parameter | Values |
-|---|---|
-| `n_products` | 1, 2, 4 |
-| `depth` | 1, 2, 3 |
-| `workstations_count` | 2, 4, 8 |
-| `sharing_ratio` | 0.0, 0.5, 1.0 |
-
-**`FIXED_PARAMS`** — factory structure parameters held constant across all runs. Values are given as ranges `[min, max]`; the generator samples uniformly within these ranges for each run, introducing natural variation. A fixed `seed` ensures reproducibility.
-
-**`SIM_PARAMS`** — simulation settings (`n_orders`, `tick_duration`, `buffer_capacity`, `order_interarrival`, `n_ticks`) that are identical for every run.
+The sweep grid is defined entirely in `config.yaml → sweep:`. Each parameter can be a scalar, a list, or a `{min, max, step}` range — every combination is tested. Simulation settings (`n_orders`, `tick_duration`, etc.) are taken from `config.yaml → simulation:` and held constant across all runs.
 
 ### Alpha (α)
 
@@ -517,10 +523,7 @@ All files include the run's sweep parameters and alpha as leading columns so row
 
 ### Single simulation run
 
-**Script:** `simulate/visualize_sim.py`  
-**Run:** `python simulate/visualize_sim.py`
-
-Reads the CSVs from `simulate/sim_output/` and shows five charts:
+Charts are shown automatically on the **Simulate** page in the UI after a run completes. The underlying script `engine/simulate/visualize_sim.py` can also be run standalone against existing CSVs. Five charts are produced:
 
 1. **Machine state % over iterations** — for every tick, the percentage of all workstations in the Working, Starved, and Blocked states. Faint raw lines show per-tick values; bold lines show a rolling average. This chart follows the CLEMATIS convention from Lopes et al.
 2. **Utilisation by workstation** — stacked bar showing how each workstation split its time across all five states.
@@ -530,10 +533,7 @@ Reads the CSVs from `simulate/sim_output/` and shows five charts:
 
 ### Parameter sweep
 
-**Script:** `visualize_sweep.py`  
-**Run:** `python visualize_sweep.py`
-
-Reads the CSVs from `sweep_output/` and shows nine charts organised into two sections:
+Charts are shown automatically on the **Sweep** page in the UI after a run completes. The underlying script `analysis/sweep/visualize_sweep.py` can also be run standalone against existing CSVs. Nine charts are organised into two sections:
 
 **Generation Graphs** — properties of the generated factory structure as a function of the generation parameters:
 1. Non-raw component count vs BOM depth (split by number of products)
@@ -552,20 +552,18 @@ Reads the CSVs from `sweep_output/` and shows nine charts organised into two sec
 
 ## Validate
 
-**Scripts:** `validate/validate.py`, `validate/visualize_validation.py`  
-**Dependencies:** `pip install pyyaml pandas plotly numba`  
-**Run:** `python run.py --validate` or `python run.py --validate-only`
-
 The validation suite checks that the simulation behaves correctly by running a set of targeted tests and comparing results against known theoretical expectations. It is split into four groups of checks, ordered from purely mechanical to statistical.
 
 ### How to run
 
-```
-python run.py --validate        # full pipeline (generate → sweep → visualize) then validate
-python run.py --validate-only   # skip generate/sweep, run validation immediately
+Run from the **Validate** page in the UI, or call it directly:
+
+```python
+from analysis.validate.validate import run_all
+passed = run_all(show_charts=False, report_dir="analysis/validate/validation_output")
 ```
 
-Results are printed to the console as `[PASS]` / `[FAIL]` and written to `validate/validation_output/validation_report.txt`. Chart data is saved as CSVs in the same folder.
+Results are written to `analysis/validate/validation_output/validation_report.txt` and displayed in the UI. Chart data is saved as CSVs in the same folder.
 
 ### Check groups
 
@@ -620,10 +618,7 @@ These checks compare simulation output against predictions from queueing theory 
 
 ### Visualize
 
-**Script:** `validate/visualize_validation.py`  
-**Run:** `python validate/visualize_validation.py`
-
-Reads the four CSVs from `validation_output/` and shows three diagnostic charts in a single figure:
+Diagnostic charts are shown automatically on the **Validate** page in the UI after a run completes. The underlying script `analysis/validate/visualize_validation.py` can also be run standalone against existing CSVs. Three diagnostic charts are shown in a single figure:
 
 1. **Cumulative orders completed over time** — a step chart. A smooth staircase confirms the scheduler is making continuous progress. A prolonged flat section indicates deadlock or persistent starvation.
 2. **Buffer levels over time** — stock of each non-raw component over the simulation, with a reference line at `buffer_capacity`. A line that reaches the cap and stays there signals a persistent blocking cascade upstream.
@@ -637,9 +632,9 @@ The `use_cases/` directory contains standalone analyses that run on top of the g
 
 ### Availability analysis
 
-**Location:** `use_cases/availability_analysis/`  
-**Entry point:** `python use_cases/availability_analysis/availability.py`  
-**README:** [`use_cases/availability_analysis/README.md`](use_cases/availability_analysis/README.md)
+**Location:** `analysis/use_cases/availability_analysis/`  
+**Entry point:** **Availability** page in the UI, or `python -m analysis.use_cases.availability_analysis.availability` standalone  
+**README:** [`analysis/use_cases/availability_analysis/README.md`](analysis/use_cases/availability_analysis/README.md)
 
 Compares three approaches to computing steady-state system availability for the generated factory:
 

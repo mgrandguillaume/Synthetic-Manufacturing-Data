@@ -280,6 +280,7 @@ def build_html(gen_result: dict, height: str = "600px") -> str:
         directed=True,
         bgcolor="#0f1117",
         font_color="#e6edf3",
+        cdn_resources="in_line",   # embed JS/CSS in the HTML — no lib/ folder written
     )
     net.toggle_physics(False)
 

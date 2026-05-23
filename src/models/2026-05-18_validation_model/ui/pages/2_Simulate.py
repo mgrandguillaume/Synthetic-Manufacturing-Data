@@ -15,17 +15,22 @@ if _UI_DIR     not in sys.path: sys.path.insert(0, _UI_DIR)
 if _MODEL_ROOT not in sys.path: sys.path.insert(0, _MODEL_ROOT)
 
 import state
+import ui_theme
 state.setup_path()
 
 from engine.simulate.simulate import simulate
 from shared_utils import theme
 
 # ── Page ───────────────────────────────────────────────────────────────────────
-st.title("▶️ Simulate")
+ui_theme.apply(
+    title   = "Simulate",
+    eyebrow = "engine · simulate",
+)
+st.caption("Discrete-time simulation run on the generated factory.")
 
 # ── Prerequisite check ─────────────────────────────────────────────────────────
 if state.get("gen_result") is None:
-    st.warning("Run **🏗️ Generate** first to create a factory.")
+    st.warning("Run **Generate** first to create a factory.")
     st.stop()
 
 # ── Load config defaults ───────────────────────────────────────────────────────
@@ -35,7 +40,7 @@ sim_cfg  = cfg.get("simulation", {})
 fail_cfg = cfg.get("failures",   {})
 
 # ── Simulation parameters ──────────────────────────────────────────────────────
-st.subheader("Parameters")
+st.markdown("## Parameters")
 c1, c2, c3 = st.columns(3)
 n_orders          = c1.number_input("Orders",               value=int(sim_cfg.get("n_orders",           10)),   step=1,   min_value=1)
 n_ticks           = c2.number_input("Max ticks",            value=int(sim_cfg.get("n_ticks",           3000)),  step=100, min_value=100)
@@ -67,7 +72,7 @@ seed_val = int(cfg.get("metadata", {}).get("seed") or 0)
 
 # ── Run button ─────────────────────────────────────────────────────────────────
 st.divider()
-if st.button("▶️ Run simulation", type="primary", use_container_width=True):
+if st.button("Run simulation", type="primary", use_container_width=True):
     with st.spinner("Simulating…"):
         results = simulate(
             state.get("gen_result"),
@@ -90,7 +95,7 @@ if st.button("▶️ Run simulation", type="primary", use_container_width=True):
 # ── Display results ────────────────────────────────────────────────────────────
 results = state.get("sim_result")
 if results is None:
-    st.info("Click **Run simulation** to start.")
+    st.info("Click Run simulation to start.")
     st.stop()
 
 st.divider()
@@ -98,14 +103,15 @@ tp = results["throughput"]
 util = results["utilization"]
 
 # Summary metrics
+st.markdown("## Results")
 m1, m2, m3, m4 = st.columns(4)
-m1.metric("Orders completed", len(tp))
-m2.metric("Total time (h)",   f"{tp['Time'].max():.2f}"  if not tp.empty else "—")
+m1.metric("Orders completed",  len(tp))
+m2.metric("Total time (h)",    f"{tp['Time'].max():.2f}"  if not tp.empty else "—")
 m3.metric("Mean lead time (h)",f"{tp['LeadTime'].mean():.2f}" if not tp.empty else "—")
-m4.metric("Mean busy %",      f"{util['BusyPct'].mean():.1f}%")
+m4.metric("Mean busy %",       f"{util['BusyPct'].mean():.1f}%")
 
 tab_util, tab_tp, tab_costs, tab_buf = st.tabs(
-    ["Utilization", "Throughput", "Costs", "Buffers"])
+    ["utilization", "throughput", "costs", "buffers"])
 
 # ── Utilization chart ──────────────────────────────────────────────────────────
 with tab_util:
@@ -122,7 +128,7 @@ with tab_util:
     fig_u.update_layout(
         barmode="stack", height=420,
         paper_bgcolor=theme.BG, plot_bgcolor=theme.BG,
-        font=dict(color=theme.TEXT, family="Inter, system-ui, sans-serif"),
+        font=dict(color=theme.TEXT, family="IBM Plex Sans, system-ui, sans-serif"),
         legend=dict(bgcolor=theme.SURFACE, bordercolor=theme.BORDER, borderwidth=1,
                     font=dict(color=theme.SUBTEXT)),
         xaxis_title="Workstation", yaxis_title="Time (%)",
@@ -145,7 +151,7 @@ with tab_tp:
         ))
         fig_tp.update_layout(
             height=350, paper_bgcolor=theme.BG, plot_bgcolor=theme.BG,
-            font=dict(color=theme.TEXT, family="Inter, system-ui, sans-serif"),
+            font=dict(color=theme.TEXT, family="IBM Plex Sans, system-ui, sans-serif"),
             xaxis_title="Simulation time (h)", yaxis_title="Cumulative orders",
             margin=dict(l=50, r=20, t=30, b=40),
         )
@@ -168,7 +174,7 @@ with tab_costs:
     fig_c.update_layout(
         barmode="stack", height=380,
         paper_bgcolor=theme.BG, plot_bgcolor=theme.BG,
-        font=dict(color=theme.TEXT, family="Inter, system-ui, sans-serif"),
+        font=dict(color=theme.TEXT, family="IBM Plex Sans, system-ui, sans-serif"),
         xaxis_title="Workstation", yaxis_title="Cost",
         legend=dict(bgcolor=theme.SURFACE, bordercolor=theme.BORDER, borderwidth=1,
                     font=dict(color=theme.SUBTEXT)),
@@ -195,7 +201,7 @@ with tab_buf:
             ))
         fig_b.update_layout(
             height=420, paper_bgcolor=theme.BG, plot_bgcolor=theme.BG,
-            font=dict(color=theme.TEXT, family="Inter, system-ui, sans-serif"),
+            font=dict(color=theme.TEXT, family="IBM Plex Sans, system-ui, sans-serif"),
             xaxis_title="Simulation time (h)", yaxis_title="Stock (units)",
             legend=dict(bgcolor=theme.SURFACE, bordercolor=theme.BORDER, borderwidth=1,
                         font=dict(color=theme.SUBTEXT, size=9)),

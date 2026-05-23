@@ -12,6 +12,7 @@ if _UI_DIR     not in sys.path: sys.path.insert(0, _UI_DIR)
 if _MODEL_ROOT not in sys.path: sys.path.insert(0, _MODEL_ROOT)
 
 import state
+import ui_theme
 state.setup_path()
 
 from analysis.validate.validate             import run_all
@@ -21,11 +22,14 @@ _VALIDATE_DIR = os.path.join(_MODEL_ROOT, "analysis", "validate", "validation_ou
 _REPORT_PATH  = os.path.join(_VALIDATE_DIR, "validation_report.txt")
 
 # ── Page ───────────────────────────────────────────────────────────────────────
-st.title("✅ Validate")
-st.caption("Runs four test suites: Conservation Laws, Boundary Cases, Monotonicity, and Statistical checks.")
+ui_theme.apply(
+    title   = "Validate",
+    eyebrow = "analyse · validate",
+)
+st.caption("Runs four test suites: conservation laws, boundary cases, monotonicity, statistical checks.")
 
 # ── Run button ─────────────────────────────────────────────────────────────────
-if st.button("✅ Run validation", type="primary", use_container_width=True):
+if st.button("Run validation", type="primary", use_container_width=True):
     with st.spinner("Running validation suite (runs several simulations)…"):
         passed = run_all(show_charts=False, report_dir=_VALIDATE_DIR)
     state.set("validate_done", True)
@@ -51,7 +55,7 @@ if os.path.exists(_REPORT_PATH):
 
     # ── Diagnostic charts ──────────────────────────────────────────────────────
     st.divider()
-    st.subheader("Diagnostic charts")
+    st.markdown("## Diagnostic charts")
 
     val_csvs = [os.path.join(_VALIDATE_DIR, f)
                 for f in ["val_orders.csv", "val_buffers.csv", "val_availability.csv"]]
@@ -65,4 +69,4 @@ if os.path.exists(_REPORT_PATH):
     st.plotly_chart(fig, use_container_width=True)
 
 else:
-    st.info("Click **Run validation** to generate the report.")
+    st.info("Click Run validation to generate the report.")

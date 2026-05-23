@@ -23,10 +23,12 @@ This metric is called **steady-state system availability** (A_sys). It is comput
 
 ## 1. How to Run
 
-From the repository root:
+**Via the UI (recommended):** open the **Availability** page in the Streamlit app (`streamlit run ui/home.py`). Set the number of replications, horizon, and warm-up period in the UI, then click **Run availability analysis**. Results and charts appear on the same page.
+
+**Standalone:** from the model root:
 
 ```bash
-uv run src/models/2026-05-18_validation_model/use_cases/availability_analysis/availability.py
+python -m analysis.use_cases.availability_analysis.availability
 ```
 
 **Expected runtime:** ~5 minutes for 1000 Monte Carlo replications on a typical laptop. The two theoretical calculations complete in under a second.
@@ -183,7 +185,9 @@ The mean and 95% CI across replications are the experimental estimate. This is t
 
 ## 6. Tunable Parameters
 
-All constants are at the top of `availability.py`:
+When running via the UI, **Replications**, **Horizon (h)**, and **Warm-up (h)** are set directly on the Availability page — no file editing required.
+
+When running standalone, these constants are at the top of `availability.py`:
 
 | Constant | Default | Effect |
 |---|---|---|

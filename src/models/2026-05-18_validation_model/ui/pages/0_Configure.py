@@ -18,19 +18,22 @@ if _UI_DIR     not in sys.path: sys.path.insert(0, _UI_DIR)
 if _MODEL_ROOT not in sys.path: sys.path.insert(0, _MODEL_ROOT)
 
 import state
+import ui_theme
 
 # ── Page ───────────────────────────────────────────────────────────────────────
-st.title("⚙️ Configure")
-st.caption(f"Editing: `{state.CONFIG_PATH}`")
-st.info(
-    "Inline comments in `config.yaml` are stripped when saving through this UI "
-    "(PyYAML limitation). All values are preserved correctly.",
-    icon="ℹ️",
+ui_theme.apply(
+    title   = "Configure",
+    eyebrow = f"project · configure · {state.CONFIG_PATH}",
+)
+st.caption(
+    "Inline comments in config.yaml are stripped on save (PyYAML limitation). "
+    "All values are preserved."
 )
 
 # ── Load current config ────────────────────────────────────────────────────────
 with open(state.CONFIG_PATH, "r") as f:
     cfg = yaml.safe_load(f)
+
 
 # ── Helper for [min, max] range fields ────────────────────────────────────────
 def _range_row(label: str, key_lo: str, key_hi: str,
@@ -56,14 +59,14 @@ meta = cfg.get("metadata", {})
 out  = cfg.get("output", {})
 
 tabs = st.tabs([
-    "📦 BOM", "🔧 Workstations", "⚙️ Configurations",
-    "🚚 Layout", "▶️ Simulation", "💥 Failures",
-    "📊 Sweep", "🗂️ Metadata & Output",
+    "bom", "workstations", "configurations",
+    "layout", "simulation", "failures",
+    "sweep", "metadata · output",
 ])
 
 # ── Tab 0: BOM ────────────────────────────────────────────────────────────────
 with tabs[0]:
-    st.subheader("Bill of Materials")
+    ui_theme.section("Bill of materials", meta="bom.*")
     c1, c2 = st.columns(2)
     c1.number_input("Number of products", key="bom_n_products", value=int(bom.get("n_products", 1)), step=1, min_value=1)
     c2.number_input("BOM depth",          key="bom_depth",      value=int(bom.get("depth", 2)),      step=1, min_value=1)
@@ -77,7 +80,7 @@ with tabs[0]:
 
 # ── Tab 1: Workstations ───────────────────────────────────────────────────────
 with tabs[1]:
-    st.subheader("Workstations")
+    ui_theme.section("Workstations", meta="workstations.*")
     st.number_input("Assembly workstation count", key="ws_count",
                     value=int(ws.get("count", 4)), step=1, min_value=1)
     use_stage_balance = st.checkbox(
@@ -95,7 +98,7 @@ with tabs[1]:
 
 # ── Tab 2: Configurations ─────────────────────────────────────────────────────
 with tabs[2]:
-    st.subheader("Configurations")
+    ui_theme.section("Configurations", meta="configurations.*")
     st.selectbox("Assembly type  (sets processing-time formula)",
                  ["low", "medium", "high"], key="cfg_assembly_type",
                  index=["low", "medium", "high"].index(cc.get("assembly_type", "medium")))
@@ -115,7 +118,7 @@ with tabs[2]:
 
 # ── Tab 3: Layout ─────────────────────────────────────────────────────────────
 with tabs[3]:
-    st.subheader("Layout")
+    ui_theme.section("Layout", meta="layout.*")
     _range_row("Flow capacity",  "lay_cap_lo",  "lay_cap_hi",
                lay.get("flow_capacity",  [50, 200])[0], lay.get("flow_capacity",  [50, 200])[1], step=5.0)
     _range_row("Transport cost", "lay_cost_lo", "lay_cost_hi",
@@ -123,7 +126,7 @@ with tabs[3]:
 
 # ── Tab 4: Simulation ─────────────────────────────────────────────────────────
 with tabs[4]:
-    st.subheader("Simulation")
+    ui_theme.section("Simulation", meta="simulation.*")
     c1, c2 = st.columns(2)
     c1.number_input("Number of orders",           key="sim_n_orders",  value=int(sim.get("n_orders", 10)),             step=1,   min_value=1)
     c2.number_input("Max ticks",                  key="sim_n_ticks",   value=int(sim.get("n_ticks", 3000)),            step=100, min_value=100)
@@ -133,7 +136,7 @@ with tabs[4]:
 
 # ── Tab 5: Failures ───────────────────────────────────────────────────────────
 with tabs[5]:
-    st.subheader("Machine Failures (Weibull model)")
+    ui_theme.section("Machine failures (Weibull)", meta="failures.*")
     st.toggle("Enable failures", key="fail_enabled", value=bool(fail.get("enabled", False)))
     st.divider()
     _range_row("Weibull β (shape)",    "fail_beta_lo",  "fail_beta_hi",
@@ -147,7 +150,7 @@ with tabs[5]:
 
 # ── Tab 6: Sweep ──────────────────────────────────────────────────────────────
 with tabs[6]:
-    st.subheader("Sweep grid")
+    ui_theme.section("Sweep grid", meta="sweep.*")
     st.markdown("""
 Each parameter can be:
 - **scalar** — `n_products: 5`
@@ -159,7 +162,7 @@ Each parameter can be:
 
 # ── Tab 7: Metadata & Output ──────────────────────────────────────────────────
 with tabs[7]:
-    st.subheader("Metadata")
+    ui_theme.section("Metadata", meta="metadata.*")
     st.text_input("Factory name", key="meta_name", value=str(meta.get("name", "simple_assembly_factory")))
     use_seed = st.checkbox("Fixed seed (reproducible)", key="meta_use_seed",
                            value=meta.get("seed") is not None)
@@ -167,13 +170,13 @@ with tabs[7]:
                     value=int(meta.get("seed") or 42), step=1,
                     disabled=not use_seed)
     st.divider()
-    st.subheader("Output")
+    ui_theme.section("Output", meta="output.*")
     st.text_input("Output directory (relative or absolute)",
                   key="out_dir", value=str(out.get("directory", "gen_output")))
 
 # ── Save button ────────────────────────────────────────────────────────────────
 st.divider()
-if st.button("💾 Save Config", type="primary", use_container_width=True):
+if st.button("Save config", type="primary", use_container_width=True):
     s = st.session_state
     try:
         sweep_parsed = yaml.safe_load(s["sweep_raw"])
@@ -231,7 +234,7 @@ if st.button("💾 Save Config", type="primary", use_container_width=True):
             yaml.dump(new_cfg, f, default_flow_style=False,
                       allow_unicode=True, sort_keys=False)
 
-        st.success("✅ Config saved successfully.")
+        st.success("Config saved.")
 
     except Exception as exc:
         st.error(f"Failed to save config: {exc}")

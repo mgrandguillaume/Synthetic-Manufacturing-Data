@@ -13,6 +13,7 @@ if _UI_DIR     not in sys.path: sys.path.insert(0, _UI_DIR)
 if _MODEL_ROOT not in sys.path: sys.path.insert(0, _MODEL_ROOT)
 
 import state
+import ui_theme
 state.setup_path()
 
 from engine.generate.generate import generate_simple_assembly
@@ -20,7 +21,10 @@ from analysis.use_cases.availability_analysis import theoretical, theoretical_in
 from analysis.use_cases.availability_analysis.availability import _show_plots
 
 # ── Page ───────────────────────────────────────────────────────────────────────
-st.title("📈 Availability Analysis")
+ui_theme.apply(
+    title   = "Availability analysis",
+    eyebrow = "analyse · availability",
+)
 st.caption("Compares theoretical (RBD) and experimental (Monte Carlo) system availability.")
 
 # ── Config check ───────────────────────────────────────────────────────────────
@@ -31,12 +35,12 @@ fail_cfg = cfg.get("failures", {})
 if not fail_cfg.get("enabled", False):
     st.error(
         "**Machine failures are disabled in `config.yaml`.** "
-        "Go to ⚙️ Config → Failures, enable them, and save before running this analysis."
+        "Go to Configure → Failures, enable them, and save before running this analysis."
     )
     st.stop()
 
 # ── Parameters ─────────────────────────────────────────────────────────────────
-st.subheader("Monte Carlo parameters")
+st.markdown("## Monte Carlo parameters")
 c1, c2, c3 = st.columns(3)
 n_replications = c1.number_input("Replications",    value=200,    step=50,   min_value=10,
                                   help="More replications → tighter CI but slower (~1 min per 200).")
@@ -49,7 +53,7 @@ seed           = 42
 
 # ── Run button ─────────────────────────────────────────────────────────────────
 st.divider()
-if st.button("📈 Run availability analysis", type="primary", use_container_width=True):
+if st.button("Run availability analysis", type="primary", use_container_width=True):
     with st.spinner("Generating factory…"):
         gen_result = generate_simple_assembly(state.CONFIG_PATH, export_csv=False)
 
@@ -80,7 +84,7 @@ if st.button("📈 Run availability analysis", type="primary", use_container_wid
 
 # ── Results ────────────────────────────────────────────────────────────────────
 if not state.get("avail_done"):
-    st.info("Click **Run availability analysis** to start.")
+    st.info("Click Run availability analysis to start.")
     st.stop()
 
 theo_mid   = state.get("avail_theo_mid")
@@ -92,12 +96,12 @@ n_reps     = state.get("avail_n_reps")
 ci_lo, ci_hi = exp["A_sys_ci95"]
 
 st.divider()
-st.subheader("Results")
+st.markdown("## Results")
 
 # Summary table
 m1, m2, m3 = st.columns(3)
-m1.metric("Midpoint A_sys",    f"{theo_mid['A_sys']*100:.3f}%")
-m2.metric("Integrated A_sys",  f"{theo_int['A_sys']*100:.3f}%")
+m1.metric("Midpoint A_sys",     f"{theo_mid['A_sys']*100:.3f}%")
+m2.metric("Integrated A_sys",   f"{theo_int['A_sys']*100:.3f}%")
 m3.metric("Experimental A_sys", f"{exp['A_sys_mean']*100:.3f}%",
           delta=f"95% CI [{ci_lo*100:.2f}%, {ci_hi*100:.2f}%]")
 
@@ -113,7 +117,7 @@ with st.expander("Weibull parameters used"):
     })
 
 # Bottlenecks table
-st.subheader("Component bottlenecks (top 10 weakest)")
+st.markdown("## Component bottlenecks  ·  top 10 weakest")
 import pandas as pd
 bottleneck_rows = []
 comp_n_producers = {}
