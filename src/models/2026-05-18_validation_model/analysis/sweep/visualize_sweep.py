@@ -347,6 +347,7 @@ def show(sweep_dir: str = _DEFAULT_SWEEP_DIR) -> None:
     theme.apply_axis_style(fig)
 
     fig.update_xaxes(title_text="BOM depth",                title_font=dict(color=theme.SUBTEXT), row=1, col=1)
+
     fig.update_xaxes(title_text="Workstations",             title_font=dict(color=theme.SUBTEXT), row=1, col=2)
     fig.update_xaxes(title_text="BOM depth",                title_font=dict(color=theme.SUBTEXT), row=2, col=1)
     fig.update_xaxes(title_text="α = depth / workstations", title_font=dict(color=theme.SUBTEXT), row=2, col=2)
@@ -368,8 +369,8 @@ def show(sweep_dir: str = _DEFAULT_SWEEP_DIR) -> None:
     fig.update_yaxes(title_text="% of machines",        title_font=dict(color=theme.SUBTEXT), row=5, col=1)
     fig.update_yaxes(title_text="Working (%)",          title_font=dict(color=theme.SUBTEXT), row=5, col=2)
 
-    fig.show()
+    return fig
 
 
 if __name__ == "__main__":
-    show()
+    show().show()

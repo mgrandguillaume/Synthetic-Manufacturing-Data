@@ -258,11 +258,11 @@ def show(output_dir: str = _DEFAULT_OUTPUT_DIR) -> None:
         ann.font.size  = 12
 
     theme.apply_axis_style(fig)
-    fig.show()
+    return fig
 
 
 # ── Standalone entry point ─────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     generate_data()
-    show()
+    show().show()

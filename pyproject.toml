@@ -11,4 +11,5 @@ dependencies = [
     "pyvis",
     "python-igraph>=1.0.0",
     "pyyaml",
+    "streamlit>=1.57.0",
 ]

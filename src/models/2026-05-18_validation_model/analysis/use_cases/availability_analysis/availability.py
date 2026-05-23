@@ -178,10 +178,12 @@ def run() -> None:
     _print_separator("=")
 
     # ── Visualisation ─────────────────────────────────────────────────────────
-    _show_plots(theo_mid, theo_int, exp, gen_result)
+    _show_plots(theo_mid, theo_int, exp, gen_result,
+                n_replications=N_REPLICATIONS).show()
 
 
-def _show_plots(theo_mid: dict, theo_int: dict, exp: dict, gen_result: dict) -> None:
+def _show_plots(theo_mid: dict, theo_int: dict, exp: dict, gen_result: dict,
+                n_replications: int | None = None):
     """Build and display a three-panel Plotly figure."""
 
     # Colour aliases for the two theoretical lines
@@ -367,7 +369,7 @@ def _show_plots(theo_mid: dict, theo_int: dict, exp: dict, gen_result: dict) -> 
         title=dict(
             text=(
                 "System Availability Analysis — "
-                f"Theoretical vs Monte Carlo ({N_REPLICATIONS} replications)"
+                f"Theoretical vs Monte Carlo ({n_replications or N_REPLICATIONS} replications)"
             ),
             font=dict(size=18, color=theme.TEXT),
             x=0.02, y=0.99,
@@ -396,7 +398,7 @@ def _show_plots(theo_mid: dict, theo_int: dict, exp: dict, gen_result: dict) -> 
         if ann.text and ann.text[:1] == "(":
             ann.update(font=dict(color=theme.TEXT, size=13))
 
-    fig.show()
+    return fig
 
 
 if __name__ == "__main__":
