@@ -112,6 +112,7 @@ def simulate(
         pre["comp_level_arr"], pre["is_product_arr"],
         pre["stock"],
         pre["demand_comp"], pre["demand_level_arr"], pre["demand_qty_arr"],
+        pre["demand_remaining_arr"],
         pre["demand_order_arr"], pre["demand_created"],
         pre["demand_assigned"], pre["demand_fulfilled"],
         pre["expl_comps"], pre["expl_qtys"], pre["expl_n"],

@@ -1,6 +1,34 @@
 """
 Numba-compiled tick loop for the Assembly Factory simulator.
 
+Unit-rate processing model
+--------------------------
+Each machine job processes exactly ONE unit of a component, regardless of
+how many units are demanded by the order.  This is the key design choice:
+
+  Old (batch) model:
+    - BOM explosion says order needs 540 × COMP_L1_1.
+    - One demand created for qty=540.
+    - One machine job runs for proc_time × 540 hours.
+    - All 540 units deposited at once at job end.
+    - buffer_capacity=10 causes permanent BLOCKED (10 < 540).
+
+  New (unit-rate) model:
+    - BOM explosion still says 540 × COMP_L1_1 needed (demand_qty=540).
+    - demand_remaining counter starts at 540.
+    - Each machine job processes exactly 1 unit (proc_time hours).
+    - 1 unit deposited into the buffer on job completion.
+    - If buffer has space (stock + 1 <= buffer_capacity) → deposit, decrement
+      remaining.  If remaining > 0 → demand returns to the queue immediately
+      so any capable machine can pick it up next tick.
+    - If buffer is full → machine goes BLOCKED, retried every tick.
+    - Downstream machines can start assembling after the FIRST unit of each
+      required input is in stock, enabling pipeline parallelism.
+
+This makes buffer_capacity a genuine, meaningful constraint: a buffer of 10
+means at most 10 intermediate units accumulate.  There is no auto-scaling
+and no deadlock from batch size exceeding capacity.
+
 Contains
 --------
 State / phase integer codes used by both Python and Numba:
@@ -48,27 +76,30 @@ def _to_ticks(hours: float, tick_duration: float) -> int:
     return t if t >= 1 else 1
 
 
-# ── Numba helper: BOM input availability check ────────────────────────────────
+# ── Numba helper: BOM input availability check (per unit) ─────────────────────
 
 @numba.njit(cache=True)
 def _inputs_ok(
     di:           int,
     demand_comp:  np.ndarray,   # int32[max_demands]
-    demand_qty:   np.ndarray,   # int32[max_demands]
     bom_ptr:      np.ndarray,   # int32[n_comps + 1]   CSR row pointers
     bom_inputs:   np.ndarray,   # int32[n_bom_edges]   CSR column indices
     bom_qtys:     np.ndarray,   # int32[n_bom_edges]   qty per BOM edge
     comp_level:   np.ndarray,   # int32[n_comps]
     stock:        np.ndarray,   # int32[n_comps]
 ) -> bool:
-    """Return True iff every non-raw BOM input for demand di is in stock."""
-    ci  = demand_comp[di]
-    qty = demand_qty[di]
+    """Return True iff stock has enough inputs to produce ONE unit of demand di.
+
+    Each job processes exactly one unit, so we check whether the buffer
+    contains at least bom_qty units of every non-raw input — enough for one
+    assembly cycle.  Raw materials (level 0) have infinite supply.
+    """
+    ci = demand_comp[di]
     for k in range(bom_ptr[ci], bom_ptr[ci + 1]):
         inp_ci  = bom_inputs[k]
         inp_qty = bom_qtys[k]
-        # Raw materials (level 0) have infinite supply — skip the stock check.
-        if comp_level[inp_ci] > 0 and stock[inp_ci] < inp_qty * qty:
+        # Need inp_qty units in stock to produce 1 output unit.
+        if comp_level[inp_ci] > 0 and stock[inp_ci] < inp_qty:
             return False
     return True
 
@@ -90,7 +121,7 @@ def _numba_tick_loop(
     ws_current_comp:    np.ndarray,   # int32  (-1 = none)
     ws_job_demand:      np.ndarray,   # int32  (-1 = no active job)
     ws_job_phase:       np.ndarray,   # int8   (0=setup, 1=processing)
-    ws_job_qty:         np.ndarray,   # int32
+    ws_job_qty:         np.ndarray,   # int32  always 1 in unit-rate model
     # Configuration matrices  [n_ws, n_comps]
     capable:            np.ndarray,   # bool
     proc_time_m:        np.ndarray,   # float64  hours per unit
@@ -109,7 +140,8 @@ def _numba_tick_loop(
     # Demand queue (pre-allocated fixed-size arrays)
     demand_comp:        np.ndarray,   # int32[max_demands]
     demand_level:       np.ndarray,   # int32[max_demands]
-    demand_qty:         np.ndarray,   # int32[max_demands]
+    demand_qty:         np.ndarray,   # int32[max_demands]  total units needed
+    demand_remaining:   np.ndarray,   # int32[max_demands]  units still to produce
     demand_order:       np.ndarray,   # int32[max_demands]
     demand_created:     np.ndarray,   # int32[max_demands]
     demand_assigned:    np.ndarray,   # bool[max_demands]
@@ -143,6 +175,28 @@ def _numba_tick_loop(
 ) -> tuple:
     """
     Core tick loop compiled to machine code by Numba.
+
+    Unit-rate processing model
+    --------------------------
+    Every machine job processes exactly ONE unit of the target component:
+
+      - Job duration   = proc_time_m[wi, ci]  (hours for one unit)
+      - Buffer deposit = 1 unit on job completion
+      - demand_remaining[di] decremented by 1 on each successful deposit
+      - When demand_remaining[di] reaches 0 → demand_fulfilled[di] = True
+      - If remaining > 0 after a deposit, demand_assigned[di] = False so
+        any capable idle machine can pick up the next unit immediately
+
+    This enables pipeline parallelism: a downstream workstation may begin
+    consuming inputs as soon as the very first unit reaches the buffer,
+    rather than waiting for the entire order batch to complete.
+
+    Buffer blocking
+    ---------------
+    A workstation goes BLOCKED if, after finishing a unit, the output
+    buffer is full (stock + 1 > buffer_capacity).  It retries every tick
+    until space is available.  buffer_capacity is therefore a hard, real
+    constraint — no auto-scaling is applied.
 
     Each tick executes eight phases (in order):
       0. Failures & repairs (Weibull age model)
@@ -182,6 +236,11 @@ def _numba_tick_loop(
         # When age reaches the pre-sampled TTF the machine fails.  After
         # repair the age resets to 0 and a new TTF is sampled from
         # Weibull(β, λ).
+        #
+        # On failure, the in-progress job's consumed inputs are returned to
+        # stock and the demand is released back to the queue (assigned=False)
+        # so another workstation can pick it up.  The one unit being processed
+        # is lost (it did not complete).
         if failures_enabled:
             for wi in range(n_ws):
                 if ws_state[wi] == _FAILED:
@@ -202,21 +261,27 @@ def _numba_tick_loop(
                         mttr_h = mttr_min + np.random.random() * (mttr_max - mttr_min)
                         ws_repair_left[wi] = _to_ticks(mttr_h, tick_duration)
 
+                        # Return the one consumed unit's inputs to stock and
+                        # release the demand back to the queue.
                         di = ws_job_demand[wi]
                         if di >= 0:
-                            ci  = demand_comp[di]
-                            qty = ws_job_qty[wi]
+                            ci = demand_comp[di]
                             for k in range(bom_ptr[ci], bom_ptr[ci + 1]):
                                 inp_ci  = bom_inputs[k]
                                 inp_qty = bom_qtys[k]
                                 if comp_level[inp_ci] > 0:
-                                    stock[inp_ci] += inp_qty * qty
+                                    # ws_job_qty is always 1; restore 1 unit's inputs
+                                    stock[inp_ci] += inp_qty
                             demand_assigned[di] = False
                             ws_job_demand[wi]   = -1
 
                         ws_state[wi] = _FAILED
 
         # ── 1. Release orders ────────────────────────────────────────────────
+        # One order released every order_interarrival ticks.  The pre-computed
+        # explosion table is read to create one demand record per component.
+        # demand_qty stores the TOTAL units needed; demand_remaining starts at
+        # the same value and counts down to 0 as units are produced.
         if tick % order_interarrival == 0 and orders_released < n_orders:
             orders_released += 1
             prod_idx = (orders_released - 1) % n_products
@@ -225,7 +290,8 @@ def _numba_tick_loop(
                 qty = expl_qtys[prod_idx, k]
                 demand_comp[n_demands]      = ci
                 demand_level[n_demands]     = comp_level[ci]
-                demand_qty[n_demands]       = qty
+                demand_qty[n_demands]       = qty        # total units needed
+                demand_remaining[n_demands] = qty        # units left to produce
                 demand_order[n_demands]     = orders_released
                 demand_created[n_demands]   = tick
                 demand_assigned[n_demands]  = False
@@ -233,6 +299,28 @@ def _numba_tick_loop(
                 n_demands += 1
 
         # ── 2. Advance in-progress jobs ──────────────────────────────────────
+        # Each active workstation ticks down its timer.  When it reaches zero:
+        #
+        #   Setup phase  → transition to processing phase for the same demand.
+        #
+        #   Processing phase (unit-rate model):
+        #     The workstation just finished producing ONE unit.
+        #
+        #     Products (is_product=True):
+        #       Decrement demand_remaining.  When it hits 0, the full order
+        #       quantity of the product is complete → log throughput.
+        #       (Product orders typically have qty=1, so this fires once.)
+        #
+        #     Intermediate components:
+        #       Try to deposit 1 unit into the output buffer.
+        #       - Space available (stock + 1 <= buffer_capacity):
+        #           stock += 1
+        #           demand_remaining -= 1
+        #           If remaining > 0 → demand_assigned = False so the same or
+        #           another capable workstation picks up the next unit next tick.
+        #           If remaining == 0 → demand_fulfilled = True.
+        #       - Buffer full:
+        #           Workstation goes BLOCKED; retried in phase 3 each tick.
         for wi in range(n_ws):
             s = ws_state[wi]
             if s != _SETUP and s != _PROCESSING:
@@ -245,39 +333,57 @@ def _numba_tick_loop(
             if ws_ticks_left[wi] > 0:
                 continue
 
-            ci  = demand_comp[di]
-            qty = ws_job_qty[wi]
+            ci = demand_comp[di]
 
             if ws_job_phase[wi] == _PHASE_SETUP:
+                # Setup complete → start processing the one unit
                 cost_setup[wi]         += setup_cost_m[wi, ci]
                 ws_job_phase[wi]        = _PHASE_PROC
-                ws_ticks_left[wi]       = _to_ticks(proc_time_m[wi, ci] * qty, tick_duration)
+                ws_ticks_left[wi]       = _to_ticks(proc_time_m[wi, ci], tick_duration)
                 ws_state[wi]            = _PROCESSING
+
             else:
-                cost_operating[wi] += op_cost_m[wi, ci] * qty
+                # Processing of one unit complete
+                cost_operating[wi] += op_cost_m[wi, ci]
 
                 if is_product[ci]:
-                    demand_fulfilled[di]        = True
-                    orders_done                += 1
-                    tp_log[n_throughput, 0]     = tick * tick_duration
-                    tp_log[n_throughput, 1]     = float(orders_done)
-                    tp_log[n_throughput, 2]     = float(demand_order[di])
-                    tp_log[n_throughput, 3]     = float(ci)
-                    tp_log[n_throughput, 4]     = (tick - demand_created[di]) * tick_duration
-                    n_throughput               += 1
-                    ws_job_demand[wi]           = -1
-                    ws_state[wi]               = _IDLE
+                    # Finished products go directly to QI — no buffer constraint.
+                    demand_remaining[di] -= 1
+                    if demand_remaining[di] <= 0:
+                        demand_fulfilled[di]    = True
+                        orders_done            += 1
+                        tp_log[n_throughput, 0] = tick * tick_duration
+                        tp_log[n_throughput, 1] = float(orders_done)
+                        tp_log[n_throughput, 2] = float(demand_order[di])
+                        tp_log[n_throughput, 3] = float(ci)
+                        tp_log[n_throughput, 4] = (tick - demand_created[di]) * tick_duration
+                        n_throughput           += 1
+                    else:
+                        # More product units still needed (qty > 1 products)
+                        demand_assigned[di] = False
+                    ws_job_demand[wi] = -1
+                    ws_state[wi]      = _IDLE
 
-                elif stock[ci] + qty <= buffer_capacity:
-                    stock[ci]            += qty
-                    demand_fulfilled[di]  = True
-                    ws_job_demand[wi]     = -1
-                    ws_state[wi]          = _IDLE
+                elif stock[ci] + 1 <= buffer_capacity:
+                    # Buffer has space — deposit the one finished unit
+                    stock[ci] += 1
+                    demand_remaining[di] -= 1
+                    if demand_remaining[di] <= 0:
+                        demand_fulfilled[di] = True
+                    else:
+                        # More units of this component still needed; release
+                        # demand so any capable machine can take the next unit
+                        demand_assigned[di] = False
+                    ws_job_demand[wi] = -1
+                    ws_state[wi]      = _IDLE
 
                 else:
+                    # Buffer full — go BLOCKED; will retry in phase 3
                     ws_state[wi] = _BLOCKED
 
         # ── 3. Retry blocked workstations ────────────────────────────────────
+        # A blocked workstation holds its finished (but undeposited) unit and
+        # retries every tick.  Downstream consumption may have freed a slot.
         for wi in range(n_ws):
             if ws_state[wi] != _BLOCKED:
                 continue
@@ -285,42 +391,78 @@ def _numba_tick_loop(
             if di < 0:
                 continue
 
-            ci  = demand_comp[di]
-            qty = ws_job_qty[wi]
+            ci = demand_comp[di]
 
             if is_product[ci]:
-                demand_fulfilled[di]        = True
-                orders_done                += 1
-                tp_log[n_throughput, 0]     = tick * tick_duration
-                tp_log[n_throughput, 1]     = float(orders_done)
-                tp_log[n_throughput, 2]     = float(demand_order[di])
-                tp_log[n_throughput, 3]     = float(ci)
-                tp_log[n_throughput, 4]     = (tick - demand_created[di]) * tick_duration
-                n_throughput               += 1
-                ws_job_demand[wi]           = -1
-                ws_state[wi]               = _IDLE
+                # Should not normally reach BLOCKED for products, but handle
+                # defensively: ship to QI unconditionally.
+                demand_remaining[di] -= 1
+                if demand_remaining[di] <= 0:
+                    demand_fulfilled[di]    = True
+                    orders_done            += 1
+                    tp_log[n_throughput, 0] = tick * tick_duration
+                    tp_log[n_throughput, 1] = float(orders_done)
+                    tp_log[n_throughput, 2] = float(demand_order[di])
+                    tp_log[n_throughput, 3] = float(ci)
+                    tp_log[n_throughput, 4] = (tick - demand_created[di]) * tick_duration
+                    n_throughput           += 1
+                else:
+                    demand_assigned[di] = False
+                ws_job_demand[wi] = -1
+                ws_state[wi]      = _IDLE
 
-            elif stock[ci] + qty <= buffer_capacity:
-                stock[ci]            += qty
-                demand_fulfilled[di]  = True
-                ws_job_demand[wi]     = -1
-                ws_state[wi]          = _IDLE
+            elif stock[ci] + 1 <= buffer_capacity:
+                stock[ci] += 1
+                demand_remaining[di] -= 1
+                if demand_remaining[di] <= 0:
+                    demand_fulfilled[di] = True
+                else:
+                    demand_assigned[di] = False
+                ws_job_demand[wi] = -1
+                ws_state[wi]      = _IDLE
 
         # ── 4. Assign idle workstations ──────────────────────────────────────
+        # Scan demands by BOM level (low levels first so inputs are produced
+        # before the assemblies that need them).  For each unassigned demand
+        # with inputs available, find the fastest eligible workstation.
+        #
+        # Unit-rate model assignment:
+        #   - Only one unit is scheduled, so the ETA uses proc_time for 1 unit.
+        #   - Stock is consumed for 1 unit's BOM inputs at assignment time.
+        #   - ws_job_qty is always set to 1.
+        #
+        # Buffer-full guard (deadlock prevention):
+        #   - If the output buffer for this demand is already at capacity, skip
+        #     the demand entirely.  This prevents a workstation from being
+        #     assigned to produce a unit it can never deposit, which would cause
+        #     a BLOCKED state that nothing can unblock (because downstream
+        #     consumers also need other component types that haven't been
+        #     produced yet — a classic multi-resource deadlock).
+        #   - By skipping full-buffer demands the scheduler naturally rotates to
+        #     other components at the same BOM level, distributing work across
+        #     all required intermediate types before any buffer saturates.
         for lvl in range(1, max_level + 1):
             for di in range(n_demands):
                 if demand_assigned[di] or demand_fulfilled[di]:
                     continue
+                if demand_remaining[di] <= 0:
+                    continue
                 if demand_level[di] != lvl:
                     continue
-                if not _inputs_ok(di, demand_comp, demand_qty,
+
+                ci = demand_comp[di]
+
+                # Do not assign when the output buffer is full; would immediately
+                # BLOCK after processing and nothing can unblock it.
+                if not is_product[ci] and stock[ci] >= buffer_capacity:
+                    continue
+
+                if not _inputs_ok(di, demand_comp,
                                   bom_ptr, bom_inputs, bom_qtys,
                                   comp_level, stock):
                     continue
 
-                ci  = demand_comp[di]
-                qty = demand_qty[di]
-
+                # Find the fastest eligible workstation (shortest setup + proc)
                 best_wi  = -1
                 best_eta = 999_999_999
                 for wi in range(n_ws):
@@ -329,8 +471,9 @@ def _numba_tick_loop(
                     if not capable[wi, ci]:
                         continue
                     st  = setup_time_m[wi, ci] if ws_current_comp[wi] != ci else 0.0
+                    # ETA for exactly 1 unit
                     eta = (_to_ticks(st, tick_duration)
-                           + _to_ticks(proc_time_m[wi, ci] * qty, tick_duration))
+                           + _to_ticks(proc_time_m[wi, ci], tick_duration))
                     if eta < best_eta:
                         best_eta = eta
                         best_wi  = wi
@@ -338,18 +481,19 @@ def _numba_tick_loop(
                 if best_wi < 0:
                     continue
 
+                # Consume 1 unit's worth of BOM inputs from stock
                 for k in range(bom_ptr[ci], bom_ptr[ci + 1]):
                     inp_ci  = bom_inputs[k]
                     inp_qty = bom_qtys[k]
                     if comp_level[inp_ci] > 0:
-                        stock[inp_ci] -= inp_qty * qty
+                        stock[inp_ci] -= inp_qty   # inp_qty for 1 output unit
 
                 demand_assigned[di]          = True
-                cost_transport[best_wi]     += transport_cost[best_wi] * qty
+                cost_transport[best_wi]     += transport_cost[best_wi]  # per unit
                 needs_setup                  = ws_current_comp[best_wi] != ci
                 ws_current_comp[best_wi]     = ci
                 ws_job_demand[best_wi]       = di
-                ws_job_qty[best_wi]          = qty
+                ws_job_qty[best_wi]          = 1   # always 1 unit per job
 
                 if needs_setup:
                     ws_state[best_wi]      = _SETUP
@@ -358,9 +502,12 @@ def _numba_tick_loop(
                 else:
                     ws_state[best_wi]      = _PROCESSING
                     ws_job_phase[best_wi]  = _PHASE_PROC
-                    ws_ticks_left[best_wi] = _to_ticks(proc_time_m[best_wi, ci] * qty, tick_duration)
+                    ws_ticks_left[best_wi] = _to_ticks(proc_time_m[best_wi, ci], tick_duration)
 
         # ── 5. Classify idle workstations as starved ─────────────────────────
+        # A workstation is STARVED if there is a demand it is capable of
+        # handling but it cannot start because the required input components
+        # are not yet in the buffer.  This is purely a diagnostic label.
         for wi in range(n_ws):
             if ws_state[wi] != _IDLE and ws_state[wi] != _STARVED:
                 continue
@@ -368,9 +515,11 @@ def _numba_tick_loop(
             for di in range(n_demands):
                 if demand_assigned[di] or demand_fulfilled[di]:
                     continue
+                if demand_remaining[di] <= 0:
+                    continue
                 if not capable[wi, demand_comp[di]]:
                     continue
-                if not _inputs_ok(di, demand_comp, demand_qty,
+                if not _inputs_ok(di, demand_comp,
                                   bom_ptr, bom_inputs, bom_qtys,
                                   comp_level, stock):
                     starved = True

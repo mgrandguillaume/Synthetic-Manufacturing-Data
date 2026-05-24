@@ -173,26 +173,6 @@ def preprocess(
     prod_explosions     = [_explode(p.id) for p in products]
     max_comps_per_order = max((len(e) for e in prod_explosions), default=1)
 
-    # ── Guard: buffer_capacity must be ≥ every exploded demand quantity ────────
-    # The BOM explosion accumulates total quantities needed per component for a
-    # single order (e.g. 12 × COMP_L1_1).  The deposit check in the tick loop
-    # is `stock + qty <= buffer_capacity`; if qty > buffer_capacity the
-    # workstation is blocked *permanently* (even with an empty buffer), causing
-    # deadlock and zero throughput.  Auto-scale upward so this cannot happen.
-    if prod_explosions:
-        max_demand_qty = max(
-            qty
-            for explosion in prod_explosions
-            for qty in explosion.values()
-        )
-        if max_demand_qty > buffer_capacity:
-            print(
-                f"[preprocess] WARNING: buffer_capacity={buffer_capacity} is smaller "
-                f"than the largest exploded demand quantity ({max_demand_qty}). "
-                f"Auto-scaling buffer_capacity -> {max_demand_qty} to prevent deadlock."
-            )
-            buffer_capacity = max_demand_qty
-
     expl_comps = np.full((n_products, max_comps_per_order), -1, dtype=np.int32)
     expl_qtys  = np.zeros((n_products, max_comps_per_order),    dtype=np.int32)
     expl_n     = np.zeros(n_products,                           dtype=np.int32)
@@ -212,14 +192,19 @@ def preprocess(
     ws_job_qty      = np.zeros(n_ws,       dtype=np.int32)
 
     # ── Demand queue ───────────────────────────────────────────────────────────
-    max_demands      = n_orders * max_comps_per_order + 16
-    demand_comp      = np.zeros(max_demands, dtype=np.int32)
-    demand_level_arr = np.zeros(max_demands, dtype=np.int32)
-    demand_qty_arr   = np.zeros(max_demands, dtype=np.int32)
-    demand_order_arr = np.zeros(max_demands, dtype=np.int32)
-    demand_created   = np.zeros(max_demands, dtype=np.int32)
-    demand_assigned  = np.zeros(max_demands, dtype=np.bool_)
-    demand_fulfilled = np.zeros(max_demands, dtype=np.bool_)
+    max_demands          = n_orders * max_comps_per_order + 16
+    demand_comp          = np.zeros(max_demands, dtype=np.int32)
+    demand_level_arr     = np.zeros(max_demands, dtype=np.int32)
+    demand_qty_arr       = np.zeros(max_demands, dtype=np.int32)
+    # demand_remaining: units still to be produced.  Starts equal to
+    # demand_qty_arr and is decremented by 1 in the tick loop each time a
+    # single unit is successfully deposited into the output buffer.
+    # When it reaches 0, demand_fulfilled is set to True.
+    demand_remaining_arr = np.zeros(max_demands, dtype=np.int32)
+    demand_order_arr     = np.zeros(max_demands, dtype=np.int32)
+    demand_created       = np.zeros(max_demands, dtype=np.int32)
+    demand_assigned      = np.zeros(max_demands, dtype=np.bool_)
+    demand_fulfilled     = np.zeros(max_demands, dtype=np.bool_)
 
     # ── Cost accumulators ──────────────────────────────────────────────────────
     cost_setup_arr     = np.zeros(n_ws, dtype=np.float64)
@@ -300,13 +285,14 @@ def preprocess(
         is_product_arr  = is_product_arr,
         stock           = stock,
         # ── Demand queue ───────────────────────────────────────────────────
-        demand_comp      = demand_comp,
-        demand_level_arr = demand_level_arr,
-        demand_qty_arr   = demand_qty_arr,
-        demand_order_arr = demand_order_arr,
-        demand_created   = demand_created,
-        demand_assigned  = demand_assigned,
-        demand_fulfilled = demand_fulfilled,
+        demand_comp          = demand_comp,
+        demand_level_arr     = demand_level_arr,
+        demand_qty_arr       = demand_qty_arr,
+        demand_remaining_arr = demand_remaining_arr,
+        demand_order_arr     = demand_order_arr,
+        demand_created       = demand_created,
+        demand_assigned      = demand_assigned,
+        demand_fulfilled     = demand_fulfilled,
         # ── BOM explosions ─────────────────────────────────────────────────
         expl_comps = expl_comps,
         expl_qtys  = expl_qtys,

@@ -1,6 +1,8 @@
 # engine/simulate
 
-Runs a discrete-time simulation of production orders through a factory built by `engine/generate`.  Uses a Numba-compiled tick loop for speed, with optional Weibull-distributed machine failures.
+Runs a discrete-time simulation of production orders through a factory built by
+`engine/generate`.  Uses a Numba-compiled tick loop for speed, with optional
+Weibull-distributed machine failures.
 
 ---
 
@@ -20,16 +22,128 @@ Runs a discrete-time simulation of production orders through a factory built by 
 ```
 simulate()
     │
-    ├─ preprocess()          Python objects → NumPy arrays
+    ├─ preprocess()          Python objects  →  NumPy arrays
     │
     ├─ _numba_tick_loop()    Compiled tick loop (machine code)
     │
-    └─ postprocess()         NumPy arrays → DataFrames
+    └─ postprocess()         NumPy arrays  →  DataFrames
 ```
 
 ---
 
-## tick_loop.py — State codes and compiled loop
+## Processing model — unit-rate (one unit per job)
+
+The simulator uses a **unit-rate processing model**: every machine job processes
+exactly **one unit** of the target component, regardless of how many units the
+order ultimately requires.  This is the central design decision of the model.
+
+### Why not a batch model?
+
+The straightforward alternative is a *batch model*: BOM explosion says an order
+needs 540 × COMP_L1_1, so one demand is created for `qty = 540`, one machine job
+runs for `proc_time × 540` hours, and all 540 units are deposited at once when
+the job finishes.
+
+This creates an immediate problem: a `buffer_capacity = 10` cannot hold 540 units,
+so every job that tries to deposit its batch instantly goes BLOCKED and can never
+complete — 0 throughput.  The only "fix" would be to auto-scale the buffer
+capacity up to the batch size, which defeats the purpose of having a capacity
+constraint.
+
+### The unit-rate model
+
+In the unit-rate model:
+
+- BOM explosion still determines the **total units needed** per component
+  (`demand_qty`).  This is preserved for reporting.
+- A separate counter, `demand_remaining`, starts at `demand_qty` and counts
+  down by 1 each time a unit is successfully deposited into the output buffer.
+- Each machine job processes **exactly 1 unit** (`ws_job_qty` is always 1).
+  The job duration is `proc_time_m[wi, ci]` — the time to make one unit.
+- When the job finishes:
+  - If the output buffer has space (`stock + 1 <= buffer_capacity`):
+    deposit 1 unit (`stock += 1`), decrement `demand_remaining`.
+    - If `demand_remaining` reaches 0, the demand is marked fulfilled.
+    - Otherwise, the demand is released back to the queue
+      (`demand_assigned = False`) so any capable workstation can pick up the
+      next unit on the next tick.
+  - If the buffer is full: the workstation goes **BLOCKED** and retries every
+    tick until space is available.
+
+### Pipeline parallelism
+
+Because units enter the buffer one at a time, a downstream workstation can begin
+consuming a component type **as soon as the first unit arrives**, rather than
+waiting for the entire quantity to be produced.  For example:
+
+```
+WS_1 produces COMP_L1_1:    ●  ●  ●  ●  ●  ●  ...   (1 unit / proc_time hours)
+WS_2 consumes COMP_L1_1:       ○  ○  ○  ○  ○  ...   (starts after 1st unit)
+```
+
+This pipeline overlap dramatically reduces lead time for multi-level BOMs
+compared with a batch model that forces each level to complete entirely before
+the next can start.
+
+### buffer_capacity as a real constraint
+
+`buffer_capacity` is the maximum number of intermediate units any buffer may
+hold.  It is enforced by the BLOCKED state: a workstation that finishes a unit
+but cannot deposit it stalls until space opens (i.e., until downstream
+consumption frees a slot).  There is no auto-scaling of any kind.
+
+Tuning guidance:
+- **Too small** (e.g. 1): workstations block frequently; throughput drops.
+- **Too large** (e.g. 10 000): buffers never fill; no blocking; higher WIP.
+- A good starting point is 10–50 units.  The UI default is 20.
+
+---
+
+## Scheduling and deadlock prevention
+
+### Assignment order
+
+The scheduler (phase 4 of the tick loop) processes demands in BOM-level order —
+lowest levels first.  This ensures raw inputs are produced before the assemblies
+that need them.  Within a level, demands are scanned in creation order.  For
+each eligible demand, the scheduler picks the **fastest eligible workstation**
+(minimum setup time + processing time for one unit).
+
+### Buffer-full guard (deadlock prevention)
+
+Without a guard, a pathological deadlock can arise with complex multi-input BOMs
+and a single workstation covering many components at the same BOM level:
+
+1. WS_1 is the only level-1 workstation and is capable of producing all 30
+   COMP_L1 variants.
+2. The scheduler assigns WS_1 to COMP_L1_1 (first in the demand list) and keeps
+   re-assigning it after each unit, filling COMP_L1_1's buffer to capacity.
+3. WS_1 then goes BLOCKED (buffer full).
+4. Level-2 workstations are STARVED: they need both COMP_L1_1 *and* COMP_L1_3,
+   but COMP_L1_3 stock is 0 (WS_1 never made any).
+5. COMP_L1_1 buffer stays full (nobody can consume it) and WS_1 stays BLOCKED —
+   a permanent deadlock, 0 throughput.
+
+The fix is simple: **if the output buffer for a demand is already at capacity,
+skip that demand in the assignment phase**.
+
+```python
+if not is_product[ci] and stock[ci] >= buffer_capacity:
+    continue   # buffer full — try the next demand
+```
+
+Effect: once COMP_L1_1's buffer is full, the scheduler skips it and assigns
+WS_1 to the next COMP_L1 demand (e.g. COMP_L1_3).  WS_1 naturally rotates
+across all 30 component types until each buffer contains some stock.  Level-2
+workstations can then start as soon as all their required inputs have at least
+the BOM-required quantity in stock.
+
+This guard is in phase 4 of `_numba_tick_loop` (see `tick_loop.py`, section
+labelled "Buffer-full guard (deadlock prevention)").
+
+---
+
+## tick_loop.py — state codes and compiled loop
 
 ### Workstation states
 
@@ -39,78 +153,190 @@ At every tick, each production workstation is in exactly one of six states:
 |---|---|---|
 | 0 | `idle` | No job assigned and no pending demand |
 | 1 | `setup` | Running a changeover before starting a new job |
-| 2 | `processing` | Actively producing a component |
-| 3 | `blocked` | Job finished but the output buffer is full |
-| 4 | `starved` | Capable of work but BOM inputs are not yet in stock |
+| 2 | `processing` | Actively producing one unit |
+| 3 | `blocked` | Unit finished but the output buffer is full |
+| 4 | `starved` | Capable of work but BOM inputs not yet in stock |
 | 5 | `failed` | Down for repair |
 
-### _numba_tick_loop
+### Eight-phase tick structure
 
-The tick loop is compiled to machine code by Numba on first call (then cached).  It receives only NumPy scalars and arrays — no Python objects cross the boundary.  Each tick executes eight phases in order:
+Each tick executes these phases in order:
 
-**0. Failures and repairs** — each workstation accumulates age only during `setup` or `processing` (not while idle, starved, or blocked).  When accumulated age reaches its sampled time-to-failure (TTF), the machine enters `failed`, any in-progress job is returned to the demand queue, and a repair timer is started.  When the timer expires the machine returns to `idle` with age reset to 0 and a fresh TTF sampled from its Weibull distribution.
+**Phase 0 — Failures and repairs**
+Each workstation accumulates age only during `setup` or `processing` states
+(not while idle, starved, or blocked).  When accumulated age reaches the
+workstation's pre-sampled time-to-failure (TTF), the machine enters `failed`.
+Any in-progress job has its consumed inputs returned to stock and its demand
+released back to the queue.  A repair timer is started (sampled uniformly from
+`[mttr_min, mttr_max]`).  When the timer expires, the machine returns to `idle`,
+age resets to 0, and a fresh TTF is drawn from `Weibull(beta, lambda)`.
 
-**1. Release orders** — every `order_interarrival` ticks, one new production order is released (up to `n_orders` total).  The BOM is exploded into individual component demands, each placed on the demand queue with its BOM level, quantity, and creation tick.
+**Phase 1 — Release orders**
+Every `order_interarrival` ticks, one new production order is released (up to
+`n_orders` total).  The BOM explosion table (pre-computed in `preprocess.py`)
+is read to create one demand record per required component.  Each demand stores:
+`demand_comp`, `demand_level`, `demand_qty` (total), `demand_remaining` (units
+left), `demand_order`, `demand_created` (tick).
 
-**2. Advance jobs** — each workstation in `setup` or `processing` decrements its timer by one tick.  When the timer reaches 0: a finishing `setup` transitions to `processing`; a finishing `processing` either deposits the output into the buffer (→ `idle`), ships it to QI if it is a product (→ `idle`), or waits if the buffer is full (→ `blocked`).
+**Phase 2 — Advance in-progress jobs**
+Each workstation in `setup` or `processing` decrements its tick counter by 1.
+When the counter reaches 0:
 
-**3. Retry blocked workstations** — `blocked` workstations try again every tick to deposit their output, in case another workstation consumed from the buffer in the same tick.
+- *Setup completing*: transition to `processing`, set counter to
+  `proc_time_m[wi, ci]` in ticks, record setup cost.
+- *Processing completing (one unit done)*:
+  - **Product component** (`is_product=True`): deposit to QI unconditionally
+    (no buffer constraint on finished goods).  Decrement `demand_remaining`.
+    If it reaches 0, log throughput.  Otherwise release demand for re-pickup.
+  - **Intermediate component**: try to deposit into the buffer.
+    - Buffer has space (`stock + 1 <= buffer_capacity`): deposit, record
+      operating cost, decrement `demand_remaining`, release demand if not done.
+    - Buffer full: go `blocked` — unit held in "machine output hopper".
 
-**4. Assign idle workstations** — for each BOM level (lowest-level components first), unassigned demand items are matched to the fastest eligible `idle` or `starved` workstation.  "Fastest" means shortest setup + processing time from that workstation.  Matched inputs are immediately deducted from stock, and the workstation begins `setup` (or skips straight to `processing` if it last made the same component).
+**Phase 3 — Retry blocked workstations**
+Every BLOCKED workstation attempts to deposit its held unit again.  If a
+downstream workstation consumed from the buffer in the same tick, the slot may
+now be available.  On success: deposit, decrement remaining, release demand
+if more units needed, go `idle`.
 
-**5. Classify starved workstations** — any `idle` workstation that is capable of a pending demand item but cannot start because BOM inputs are missing is reclassified as `starved`.  This is purely a state label; the workstation stays passive.
+**Phase 4 — Assign idle workstations**
+Demands are scanned lowest BOM level first.  For each eligible demand, the
+scheduler picks the fastest `idle`/`starved` capable workstation.
 
-**6. Log states** — the current state of every workstation is written to `state_log`.
+Eligibility checks (in order, all must pass):
+1. `demand_assigned` is False and `demand_fulfilled` is False.
+2. `demand_remaining > 0`.
+3. BOM level matches the current scan level.
+4. **Buffer-full guard**: `stock[ci] < buffer_capacity` (or it is a product).
+5. All BOM inputs present in stock for one unit (`_inputs_ok`).
 
-**7. Log buffers** — if enabled, the current stock level of every non-raw component is written to `buf_log`.
+On assignment: BOM inputs for 1 unit are deducted from stock immediately,
+transport cost is recorded, `ws_job_qty = 1`, and the workstation begins
+`setup` (or skips to `processing` if no changeover needed).
 
-**8. Early exit** — if all orders are fulfilled, the loop exits before `n_ticks` is reached.
+**Phase 5 — Classify starved workstations**
+Any `idle` workstation capable of a pending-but-unstarted demand, where the
+demand's inputs are not yet in stock, is reclassified as `starved`.
+
+**Phase 6 — Log workstation states**
+`state_log[tick, wi]` is written for every workstation.
+
+**Phase 7 — Log buffer levels (optional)**
+If `log_buffers=True`, `buf_log[tick, ci]` is written for every component.
+
+**Phase 8 — Early exit**
+The loop exits as soon as `orders_done >= n_orders`, before reaching `n_ticks`.
 
 ---
 
-## preprocess.py — Python → NumPy
+## preprocess.py — Python objects to NumPy
 
-Takes the dict returned by `generate.py` and produces all arrays needed by the tick loop.  Key transformations:
+Takes the dict returned by `generate.py` and produces all arrays the tick loop
+needs.  Key transformations:
 
-**Index maps** — component IDs and workstation IDs are mapped to integer indices so the Numba loop can use plain array lookups instead of hash maps.
+**Index maps** — component IDs and workstation IDs become contiguous integer
+indices, enabling plain array lookups instead of hash maps inside Numba.
 
-**BOM in CSR format** — the bill-of-materials is stored as a Compressed Sparse Row matrix (`bom_ptr`, `bom_inputs`, `bom_qtys`).  For a given output component `ci`, its input components and quantities are found at `bom_inputs[bom_ptr[ci] : bom_ptr[ci+1]]`.  This lets the Numba loop check input availability with a tight inner loop and no Python object access.
+**BOM in CSR format** — the bill-of-materials is stored as a Compressed Sparse
+Row matrix (`bom_ptr`, `bom_inputs`, `bom_qtys`).  For a given output component
+`ci`, its input components and quantities are at
+`bom_inputs[bom_ptr[ci] : bom_ptr[ci+1]]`.  This allows the Numba loop to check
+input availability with a tight inner loop and zero Python overhead.
 
-**BOM explosion** — for each product, the full set of component demands generated by one order is pre-computed (`expl_comps`, `expl_qtys`, `expl_n`).  When an order is released, the loop simply reads from this table rather than traversing the BOM tree at runtime.
+**BOM explosion** — for each product, the full set of component demands generated
+by one order is pre-computed (`expl_comps`, `expl_qtys`, `expl_n`).  When an
+order is released in the tick loop, the loop simply reads from this table rather
+than traversing the BOM tree at runtime.
 
-**Weibull parameters** — if failures are enabled, per-workstation β and λ values are sampled in Python (from the configured ranges) and the initial TTF for each workstation is drawn before the loop starts.  The Numba loop then handles all subsequent failure sampling internally.
+**Demand queue arrays** — all demand arrays (`demand_comp`, `demand_level`,
+`demand_qty`, `demand_remaining`, `demand_order`, `demand_created`,
+`demand_assigned`, `demand_fulfilled`) are pre-allocated for the maximum possible
+number of demands (`n_orders × max_comps_per_order + 16`).  The tick loop fills
+them by index as orders are released.
 
-**Output arrays** — `state_log`, `tp_log` (throughput), `buf_log` (buffer levels), and cost accumulators are allocated here and passed into the tick loop as writable arrays.
+**Weibull parameters** — if failures are enabled, per-workstation `ws_beta` and
+`ws_lambda` are sampled from the configured ranges and the initial `ws_ttf`
+(time-to-failure in ticks) is drawn before the loop starts.  Raw materials
+(level 0) have stock initialised to `_INF = 10_000_000`.
+
+**Output arrays** — `state_log`, `tp_log`, `buf_log`, and cost accumulators are
+allocated here and passed into the tick loop as writable arrays.
 
 ---
 
-## postprocess.py — NumPy → DataFrames
+## postprocess.py — NumPy arrays to DataFrames
 
 Reads the output arrays written by the tick loop and constructs five DataFrames:
 
 | Key | Content |
 |---|---|
-| `states` | One row per (tick, workstation): tick index, simulation time, and state name |
-| `utilization` | One row per workstation: total hours and percentage in each state |
-| `throughput` | One row per completed order: completion time, order number, product ID, and lead time |
+| `states` | One row per (tick, workstation): tick index, simulated time (h), and state name |
+| `utilization` | One row per workstation: total hours and percentage in each of the 6 states |
+| `throughput` | One row per completed order: completion time, order number, product ID, lead time |
 | `costs` | One row per workstation: setup, operating, transport, and repair costs |
 | `buffers` | One row per (tick, component): stock level over time (empty if `log_buffers=False`) |
 
-`utilization` includes `Failed` / `FailedPct` columns regardless of whether failures were enabled (they will be zero if not).  `costs` always includes a `RepairCost` column.
+`utilization` always includes `Failed` and `FailedPct` columns (zero when
+failures are disabled).  `costs` always includes a `RepairCost` column.
 
 ---
 
-## simulate.py — Public API
-
-A single public function:
+## simulate.py — public API
 
 ```python
-simulate(gen_result, n_orders=10, tick_duration=0.05, buffer_capacity=20,
-         order_interarrival=10, n_ticks=3000, log_buffers=True,
-         failures_enabled=False, weibull_beta_range=None,
-         weibull_lambda_range=None, mttr_range=None,
-         repair_cost_range=None, seed=None)
--> dict[str, pd.DataFrame]
+simulate(
+    gen_result,
+    n_orders           = 10,
+    tick_duration      = 0.05,      # simulated hours per tick
+    buffer_capacity    = 20,        # max units in any intermediate buffer
+    order_interarrival = 10,        # ticks between successive order releases
+    n_ticks            = 3000,      # hard upper bound on simulation length
+    log_buffers        = True,
+    failures_enabled   = False,
+    weibull_beta_range   = [2.0,   2.0],
+    weibull_lambda_range = [100.0, 100.0],
+    mttr_range           = [1.0,   1.0],
+    repair_cost_range    = [0.0,   0.0],
+    seed               = None,
+) -> dict[str, pd.DataFrame]
 ```
 
-It sets default values for the optional failure parameters, calls `preprocess` → `_numba_tick_loop` → `postprocess`, and returns the five-DataFrame dict.  The Numba compilation message is printed here so callers see progress on slow first runs.
+Sets default values for optional failure parameters, calls
+`preprocess` → `_numba_tick_loop` → `postprocess`, and returns the
+five-DataFrame result dict.
+
+### Sizing n_ticks
+
+`n_ticks × tick_duration` = total simulated hours.  For a factory with BOM
+depth D and branching factor B at each level, a single order may require on the
+order of `B^D` component units.  Each unit takes roughly `proc_time / tick_duration`
+ticks to produce.  A rough lower bound for `n_ticks` is:
+
+```
+n_ticks > n_orders × (B^D × proc_time) / tick_duration
+```
+
+Example: depth=5, B=2, proc_time=2.9 h, tick_duration=0.05 h, n_orders=10:
+```
+n_ticks > 10 × (32 × 2.9) / 0.05  ≈  185 000
+```
+
+When in doubt, run with `n_orders=1` first and check `throughput["Time"].max()`
+to gauge the required horizon.
+
+---
+
+## Numba compilation notes
+
+`_numba_tick_loop` is decorated with `@numba.njit(cache=True)`.  On the first
+call with a given Python environment, Numba compiles the function to machine
+code and caches the result in `__pycache__`.  Subsequent calls load from cache
+and execute immediately.
+
+- If you change the **function signature** (add/remove/reorder parameters), the
+  cache is invalidated automatically and recompilation occurs.
+- If you see stale behaviour after a code change, delete `__pycache__` in the
+  `engine/simulate/` directory and let it recompile.
+- Compilation takes 5–20 seconds on first call; cached runs are effectively
+  instant (the loop itself runs in milliseconds to seconds depending on
+  `n_ticks`).
