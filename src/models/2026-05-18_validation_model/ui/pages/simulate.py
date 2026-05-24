@@ -3,6 +3,7 @@
 import yaml
 import dash
 from dash import html, dcc, Input, Output, State, callback
+import plotly.graph_objects as go
 import store
 
 dash.register_page(__name__, path="/simulate", title="Simulate")
@@ -24,12 +25,14 @@ def _metric(label, value):
     ], className="metric-card")
 
 
-def _render_results(results) -> list:
-    if results is None:
-        return [html.Div("Click Run simulation to start.", className="alert alert-info")]
+def _build_figures(results: dict) -> dict:
+    """Build all four Plotly figures from simulation result DataFrames.
 
+    Heavy function — only called once after a fresh simulation run.
+    Returns a dict of serialised figure dicts (via .to_dict()) so they can
+    be cached in store and cheaply reconstructed on subsequent page visits.
+    """
     from shared_utils import theme
-    import plotly.graph_objects as go
 
     tp   = results["throughput"]
     util = results["utilization"]
@@ -57,6 +60,7 @@ def _render_results(results) -> list:
     theme.apply_axis_style(fig_u)
 
     # Throughput chart
+    fig_tp_dict = None
     if not tp.empty:
         times  = [0.0] + tp["Time"].tolist()
         counts = list(range(len(times)))
@@ -72,27 +76,10 @@ def _render_results(results) -> list:
             margin=dict(l=50, r=20, t=30, b=40),
         )
         theme.apply_axis_style(fig_tp)
-        tp_tab_content = [
-            dcc.Graph(figure=fig_tp),
-            dash.dash_table.DataTable(
-                data=tp.to_dict("records"),
-                columns=[{"name": c, "id": c} for c in tp.columns],
-                style_table={"overflowX": "auto"},
-                style_cell=dict(fontFamily="JetBrains Mono, monospace",
-                                fontSize="12px", padding="5px 9px",
-                                border="1px solid #d9d9d4"),
-                style_header=dict(background="#f7f7f5", fontWeight="500",
-                                  border="1px solid #d9d9d4",
-                                  color="#6a6a6a", fontSize="11px"),
-            ),
-        ]
-    else:
-        tp_tab_content = [html.Div("No orders completed.", className="alert alert-warning")]
+        fig_tp_dict = fig_tp.to_dict()
 
     # Costs chart
     costs = results["costs"].copy()
-    costs["TotalCost"] = (costs["SetupCost"] + costs["OperatingCost"]
-                          + costs["TransportCost"] + costs["RepairCost"])
     cost_cols = ["SetupCost","OperatingCost","TransportCost","RepairCost"]
     fig_c = go.Figure()
     for i, col in enumerate(cost_cols):
@@ -111,8 +98,9 @@ def _render_results(results) -> list:
     )
     theme.apply_axis_style(fig_c)
 
-    # Buffers chart
+    # Buffers chart  (most expensive — iterates large DataFrame)
     buf_df = results["buffers"]
+    fig_b_dict = None
     if not buf_df.empty:
         fig_b = go.Figure()
         for i, comp in enumerate(buf_df["Component"].unique()):
@@ -131,7 +119,52 @@ def _render_results(results) -> list:
             margin=dict(l=50, r=20, t=30, b=40),
         )
         theme.apply_axis_style(fig_b)
-        buf_content = [dcc.Graph(figure=fig_b)]
+        fig_b_dict = fig_b.to_dict()
+
+    return dict(
+        util=fig_u.to_dict(),
+        tp=fig_tp_dict,
+        cost=fig_c.to_dict(),
+        buf=fig_b_dict,
+    )
+
+
+def _assemble_children(results: dict, figs: dict) -> list:
+    """Build the Dash children list from pre-computed figure dicts.
+
+    Called both after a fresh run (figs just built) and on page revisit
+    (figs loaded from store).  Reconstructing go.Figure from a dict is
+    O(1) — no DataFrame work happens here.
+    """
+    tp   = results["throughput"]
+    util = results["utilization"]
+
+    fig_u = go.Figure(figs["util"])
+    fig_c = go.Figure(figs["cost"])
+
+    # Throughput tab
+    if figs.get("tp") is not None:
+        fig_tp = go.Figure(figs["tp"])
+        tp_tab_content = [
+            dcc.Graph(figure=fig_tp),
+            dash.dash_table.DataTable(
+                data=tp.to_dict("records"),
+                columns=[{"name": c, "id": c} for c in tp.columns],
+                style_table={"overflowX": "auto"},
+                style_cell=dict(fontFamily="JetBrains Mono, monospace",
+                                fontSize="12px", padding="5px 9px",
+                                border="1px solid #d9d9d4"),
+                style_header=dict(background="#f7f7f5", fontWeight="500",
+                                  border="1px solid #d9d9d4",
+                                  color="#6a6a6a", fontSize="11px"),
+            ),
+        ]
+    else:
+        tp_tab_content = [html.Div("No orders completed.", className="alert alert-warning")]
+
+    # Buffers tab
+    if figs.get("buf") is not None:
+        buf_content = [dcc.Graph(figure=go.Figure(figs["buf"]))]
     else:
         buf_content = [html.Div(
             "Buffer logging was disabled. Re-run with Log buffer levels enabled.",
@@ -143,7 +176,7 @@ def _render_results(results) -> list:
         html.H2("Results"),
         html.Div([
             _metric("Orders completed",   len(tp)),
-            _metric("Total time (h)",     f"{tp['Time'].max():.2f}"   if not tp.empty else "—"),
+            _metric("Total time (h)",     f"{tp['Time'].max():.2f}"      if not tp.empty else "—"),
             _metric("Mean lead time (h)", f"{tp['LeadTime'].mean():.2f}" if not tp.empty else "—"),
             _metric("Mean busy %",        f"{util['BusyPct'].mean():.1f}%"),
         ], className="metric-row"),
@@ -161,6 +194,25 @@ def _render_results(results) -> list:
     ]
 
 
+def _render_results(results) -> list:
+    """Return Dash children for the results area.
+
+    On first call after a fresh run the figures are built from DataFrames
+    and cached in store.  On every subsequent page visit the cached figure
+    dicts are used directly — no DataFrame work, instant load.
+    """
+    if results is None:
+        return [html.Div("Click Run simulation to start.", className="alert alert-info")]
+
+    figs = store.get("sim_figures")
+    if figs is None:
+        # First time: build figures (slow for large buffer logs) and cache
+        figs = _build_figures(results)
+        store.set("sim_figures", figs)
+
+    return _assemble_children(results, figs)
+
+
 # ── Layout ─────────────────────────────────────────────────────────────────────
 
 def layout():
@@ -168,6 +220,14 @@ def layout():
         cfg = yaml.safe_load(f)
     sim  = cfg.get("simulation", {})
     fail = cfg.get("failures",   {})
+
+    # Restore last-used values from store, fall back to config defaults.
+    # This ensures navigating away and back keeps the user's edits intact.
+    p = store.get("sim_params") or {}
+
+    def _v(key, cfg_val):
+        """Return stored param if present, else the config/default value."""
+        return p[key] if key in p else cfg_val
 
     # Prerequisite check
     if store.get("gen_result") is None:
@@ -177,6 +237,9 @@ def layout():
         )
     else:
         prereq = None
+
+    fail_enabled_val = _v("fail_enabled", ["yes"] if fail.get("enabled", False) else [])
+    log_buf_val      = _v("log_buffers",  ["yes"])
 
     return html.Div([
         html.Div("engine · simulate", className="af-eyebrow"),
@@ -190,24 +253,24 @@ def layout():
         html.H2("Parameters"),
         html.Div([
             html.Div([_label("Orders"),
-                      _num("sim-n-orders", int(sim.get("n_orders",10)), min_val=1)],
+                      _num("sim-n-orders", _v("n_orders",    int(sim.get("n_orders",10))),   min_val=1)],
                      className="form-group"),
             html.Div([_label("Max ticks"),
-                      _num("sim-n-ticks", int(sim.get("n_ticks",3000)), step=100, min_val=100)],
+                      _num("sim-n-ticks",  _v("n_ticks",     int(sim.get("n_ticks",3000))),  step=100, min_val=100)],
                      className="form-group"),
             html.Div([_label("Tick duration (h)"),
-                      _num("sim-tick", float(sim.get("tick_duration",0.05)), step=0.01, min_val=0.001)],
+                      _num("sim-tick",     _v("tick",        float(sim.get("tick_duration",0.05))), step=0.01, min_val=0.001)],
                      className="form-group"),
             html.Div([_label("Buffer capacity"),
-                      _num("sim-buf", int(sim.get("buffer_capacity",20)), min_val=1)],
+                      _num("sim-buf",      _v("buf",         int(sim.get("buffer_capacity",20))),   min_val=1)],
                      className="form-group"),
             html.Div([_label("Interarrival (ticks)"),
-                      _num("sim-interarr", int(sim.get("order_interarrival",10)), min_val=1)],
+                      _num("sim-interarr", _v("interarr",    int(sim.get("order_interarrival",10))), min_val=1)],
                      className="form-group"),
             html.Div([_label("Log buffer levels"),
                       dcc.Checklist(id="sim-log-buffers",
                                     options=[{"label": " enabled", "value": "yes"}],
-                                    value=["yes"])],
+                                    value=log_buf_val)],
                      className="form-group"),
         ], className="grid-3"),
 
@@ -215,37 +278,37 @@ def layout():
         html.Label([
             dcc.Checklist(id="sim-fail-enabled",
                           options=[{"label": "  Enable machine failures", "value": "yes"}],
-                          value=["yes"] if fail.get("enabled", False) else []),
+                          value=fail_enabled_val),
         ], className="toggle-row"),
 
         html.Div(id="sim-fail-params", children=[
             html.Div([
                 html.Div([_label("Weibull β min"),
-                          _num("sim-beta-lo", float(fail.get("weibull_beta",[1.5,3.0])[0]), step=0.1)],
+                          _num("sim-beta-lo", _v("beta_lo", float(fail.get("weibull_beta",[1.5,3.0])[0])), step=0.1)],
                          className="form-group"),
                 html.Div([_label("Weibull β max"),
-                          _num("sim-beta-hi", float(fail.get("weibull_beta",[1.5,3.0])[1]), step=0.1)],
+                          _num("sim-beta-hi", _v("beta_hi", float(fail.get("weibull_beta",[1.5,3.0])[1])), step=0.1)],
                          className="form-group"),
                 html.Div([_label("Weibull λ min (h)"),
-                          _num("sim-lam-lo", float(fail.get("weibull_lambda",[20,50])[0]), step=1.0)],
+                          _num("sim-lam-lo",  _v("lam_lo",  float(fail.get("weibull_lambda",[20,50])[0])), step=1.0)],
                          className="form-group"),
                 html.Div([_label("Weibull λ max (h)"),
-                          _num("sim-lam-hi", float(fail.get("weibull_lambda",[20,50])[1]), step=1.0)],
+                          _num("sim-lam-hi",  _v("lam_hi",  float(fail.get("weibull_lambda",[20,50])[1])), step=1.0)],
                          className="form-group"),
                 html.Div([_label("MTTR min (h)"),
-                          _num("sim-mttr-lo", float(fail.get("mttr",[0.5,4.0])[0]), step=0.1)],
+                          _num("sim-mttr-lo", _v("mttr_lo", float(fail.get("mttr",[0.5,4.0])[0])), step=0.1)],
                          className="form-group"),
                 html.Div([_label("MTTR max (h)"),
-                          _num("sim-mttr-hi", float(fail.get("mttr",[0.5,4.0])[1]), step=0.1)],
+                          _num("sim-mttr-hi", _v("mttr_hi", float(fail.get("mttr",[0.5,4.0])[1])), step=0.1)],
                          className="form-group"),
                 html.Div([_label("Repair cost min"),
-                          _num("sim-rc-lo", float(fail.get("repair_cost",[100,500])[0]), step=10.0)],
+                          _num("sim-rc-lo",   _v("rc_lo",   float(fail.get("repair_cost",[100,500])[0])), step=10.0)],
                          className="form-group"),
                 html.Div([_label("Repair cost max"),
-                          _num("sim-rc-hi", float(fail.get("repair_cost",[100,500])[1]), step=10.0)],
+                          _num("sim-rc-hi",   _v("rc_hi",   float(fail.get("repair_cost",[100,500])[1])), step=10.0)],
                          className="form-group"),
             ], className="grid-2"),
-        ], style={"display": "none"}),
+        ], style={} if fail_enabled_val else {"display": "none"}),
 
         html.Hr(className="divider"),
         html.Button("Run simulation", id="sim-btn", n_clicks=0,
@@ -306,6 +369,18 @@ def _run_sim(n_clicks,
         cfg = yaml.safe_load(f)
     seed = cfg.get("metadata", {}).get("seed")
 
+    # Persist all form values so layout() can restore them on the next page visit
+    store.set("sim_params", dict(
+        n_orders=int(n_orders or 10),   n_ticks=int(n_ticks or 3000),
+        tick=float(tick or 0.05),       buf=int(buf or 20),
+        interarr=int(interarr or 10),   log_buffers=log_buf,
+        fail_enabled=fail_en,
+        beta_lo=float(beta_lo or 1.5),  beta_hi=float(beta_hi or 3.0),
+        lam_lo=float(lam_lo or 20),     lam_hi=float(lam_hi or 50),
+        mttr_lo=float(mttr_lo or 0.5),  mttr_hi=float(mttr_hi or 4.0),
+        rc_lo=float(rc_lo or 100),      rc_hi=float(rc_hi or 500),
+    ))
+
     try:
         results = simulate(
             gen_result,
@@ -323,7 +398,11 @@ def _run_sim(n_clicks,
             seed                 = seed,
         )
         store.set("sim_result", results)
-        return _render_results(results), html.Div("Simulation complete.", className="alert alert-success")
+        # Build figures now and cache them so future page visits are instant
+        store.set("sim_figures", None)   # clear stale cache first
+        figs = _build_figures(results)
+        store.set("sim_figures", figs)
+        return _assemble_children(results, figs), html.Div("Simulation complete.", className="alert alert-success")
 
     except Exception as exc:
         return dash.no_update, html.Div(f"Error: {exc}", className="alert alert-error")

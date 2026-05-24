@@ -27,6 +27,8 @@ CONFIG_PATH = os.path.join(MODEL_ROOT, "config.yaml")
 _store: dict = {
     "gen_result":      None,  # dict returned by generate_from_params / generate_simple_assembly
     "sim_result":      None,  # dict of DataFrames from simulate()
+    "sim_figures":     None,  # cached Plotly figure dicts (avoids rebuilding on page revisit)
+    "sim_params":      None,  # last-used simulate() parameters (restored on page revisit)
     "sweep_done":      False,
     "validate_done":   False,
     "validate_passed": None,
