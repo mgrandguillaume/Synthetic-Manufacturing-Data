@@ -22,15 +22,23 @@ def _num(id_: str, value, step=1, min_val=None, max_val=None, fmt=None) -> dcc.I
 
 
 def _range_row(label: str, id_lo: str, id_hi: str,
-               lo, hi, step=1, min_val=None) -> html.Div:
-    return html.Div([
+               lo, hi, step=1, min_val=None, hint: str = None) -> html.Div:
+    children = [
         html.Div([
             html.Div([_label(f"{label} — min"), _num(id_lo, lo, step=step, min_val=min_val)],
                      className="form-group"),
             html.Div([_label(f"{label} — max"), _num(id_hi, hi, step=step, min_val=min_val)],
                      className="form-group"),
         ], className="grid-2"),
-    ])
+    ]
+    if hint:
+        children.append(_hint(hint))
+    return html.Div(children)
+
+
+def _hint(text: str) -> html.Span:
+    """Muted descriptive text rendered below an input field."""
+    return html.Span(text, className="field-hint")
 
 
 def _section(name: str, meta: str = "") -> html.Div:
@@ -47,10 +55,9 @@ def layout():
     with open(store.CONFIG_PATH) as f:
         cfg = yaml.safe_load(f)
 
-    bom  = cfg.get("bom",            {})
-    ws   = cfg.get("workstations",   {})
-    cc   = cfg.get("configurations", {})
-    lay  = cfg.get("layout",         {})
+    bom  = cfg.get("bom",          {})
+    ws   = cfg.get("workstations", {})
+    lay  = cfg.get("layout",       {})
     sim  = cfg.get("simulation",     {})
     fail = cfg.get("failures",       {})
     meta = cfg.get("metadata",       {})
@@ -117,50 +124,43 @@ def layout():
                                           step=0.5, min=0.0, debounce=True,
                                           style={"width": "100%"}),
                             ], id="cfg-ws-stage-balance-wrap", className="form-group"),
-                        ], className="af-section-body"),
-                    ])),
-
-            # ── Tab 2: Configurations ─────────────────────────────────────────
-            dcc.Tab(label="configurations", className="tab-item", selected_className="tab-item--selected",
-                    children=html.Div([
-                        _section("Configurations", meta="configurations.*"),
-                        html.Div([
+                            html.Hr(className="divider"),
                             html.Div([
                                 _label("Assembly type  (sets processing-time formula)"),
                                 dcc.Dropdown(
                                     id="cfg-assembly-type",
                                     options=["low", "medium", "high"],
-                                    value=cc.get("assembly_type", "medium"),
+                                    value=ws.get("assembly_type", "medium"),
                                     clearable=False,
                                 ),
                             ], className="form-group"),
                             html.Div([
                                 _label("Variation  (±fraction around formula mean)"),
-                                _num("cfg-variation", float(cc.get("variation", 0.10)),
+                                _num("cfg-variation", float(ws.get("variation", 0.10)),
                                      step=0.01, min_val=0.0, max_val=1.0),
                             ], className="form-group"),
                             _range_row("Producers per component",
                                        "cfg-prod-lo", "cfg-prod-hi",
-                                       cc.get("producers_per_component", [1, 2])[0],
-                                       cc.get("producers_per_component", [1, 2])[1], min_val=1),
+                                       ws.get("producers_per_component", [1, 2])[0],
+                                       ws.get("producers_per_component", [1, 2])[1], min_val=1),
                             html.Hr(className="divider"),
                             _range_row("Setup time (h)",
                                        "cfg-st-lo", "cfg-st-hi",
-                                       cc.get("setup_time",     [0.5, 2.0])[0],
-                                       cc.get("setup_time",     [0.5, 2.0])[1], step=0.1),
+                                       ws.get("setup_time",     [0.5, 2.0])[0],
+                                       ws.get("setup_time",     [0.5, 2.0])[1], step=0.1),
                             _range_row("Setup cost",
                                        "cfg-sc-lo", "cfg-sc-hi",
-                                       cc.get("setup_cost",     [50,  300])[0],
-                                       cc.get("setup_cost",     [50,  300])[1], step=10.0),
+                                       ws.get("setup_cost",     [50,  300])[0],
+                                       ws.get("setup_cost",     [50,  300])[1], step=10.0),
                             _range_row("Operating cost",
                                        "cfg-oc-lo", "cfg-oc-hi",
-                                       cc.get("operating_cost", [2,   15])[0],
-                                       cc.get("operating_cost", [2,   15])[1], step=0.5),
+                                       ws.get("operating_cost", [2,   15])[0],
+                                       ws.get("operating_cost", [2,   15])[1], step=0.5),
                         ], className="af-section-body"),
                     ])),
 
-            # ── Tab 3: Layout ─────────────────────────────────────────────────
-            dcc.Tab(label="layout", className="tab-item", selected_className="tab-item--selected",
+            # ── Tab 2: Layout ─────────────────────────────────────────────────
+            dcc.Tab(label="layout",  className="tab-item", selected_className="tab-item--selected",
                     children=html.Div([
                         _section("Layout", meta="layout.*"),
                         html.Div([
@@ -322,7 +322,6 @@ def _toggle_stage_balance(value):
     State("cfg-ws-count",              "value"),
     State("cfg-ws-use-stage-balance",  "value"),
     State("cfg-ws-stage-balance",      "value"),
-    # ── Configurations ────────────────────────────────────────────────────────
     State("cfg-assembly-type", "value"),
     State("cfg-variation",     "value"),
     State("cfg-prod-lo",       "value"),
@@ -393,16 +392,14 @@ def _save_config(n_clicks,
                 "sharing_ratio": float(sharing or 0.0),
             },
             "workstations": {
-                "count":         int(ws_cnt or 4),
-                "stage_balance": float(sb_val or 1.0) if use_sb else None,
-            },
-            "configurations": {
+                "count":                   int(ws_cnt or 4),
+                "stage_balance":           float(sb_val or 1.0) if use_sb else None,
                 "producers_per_component": [int(prod_lo or 1), int(prod_hi or 2)],
-                "assembly_type": asm_type or "medium",
-                "variation":     float(variation or 0.10),
-                "setup_time":    [float(st_lo or 0.5),  float(st_hi or 2.0)],
-                "setup_cost":    [float(sc_lo or 50),   float(sc_hi or 300)],
-                "operating_cost":[float(oc_lo or 2),    float(oc_hi or 15)],
+                "assembly_type":           asm_type or "medium",
+                "variation":               float(variation or 0.10),
+                "setup_time":              [float(st_lo or 0.5),  float(st_hi or 2.0)],
+                "setup_cost":              [float(sc_lo or 50),   float(sc_hi or 300)],
+                "operating_cost":          [float(oc_lo or 2),    float(oc_hi or 15)],
             },
             "layout": {
                 "flow_capacity":  [float(cap_lo  or 50),  float(cap_hi  or 200)],

@@ -12,9 +12,8 @@ bom:
   - 3
   sharing_ratio: 0.3
 workstations:
-  count: 8
+  count: 12
   stage_balance: 1.0
-configurations:
   producers_per_component:
   - 1
   - 2

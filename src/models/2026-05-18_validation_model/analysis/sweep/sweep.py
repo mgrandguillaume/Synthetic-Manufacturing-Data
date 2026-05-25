@@ -86,19 +86,19 @@ def main(progress_callback=None, max_runs: int | None = None):
     fixed_params: dict = {
         "branching":               cfg["bom"]["branching"],
         "quantity":                cfg["bom"]["quantity"],
-        "producers_per_component": cfg["configurations"]["producers_per_component"],
+        "producers_per_component": cfg["workstations"]["producers_per_component"],
         "processing_time":         (
             pt_range(
-                cfg["configurations"]["assembly_type"],
+                cfg["workstations"]["assembly_type"],
                 cfg["bom"]["depth"],
-                cfg["configurations"].get("variation", 0.10),
+                cfg["workstations"].get("variation", 0.10),
             )
-            if "assembly_type" in cfg["configurations"]
-            else cfg["configurations"]["processing_time"]
+            if "assembly_type" in cfg["workstations"]
+            else cfg["workstations"]["processing_time"]
         ),
-        "setup_time":              cfg["configurations"]["setup_time"],
-        "setup_cost":              cfg["configurations"]["setup_cost"],
-        "operating_cost":          cfg["configurations"]["operating_cost"],
+        "setup_time":              cfg["workstations"]["setup_time"],
+        "setup_cost":              cfg["workstations"]["setup_cost"],
+        "operating_cost":          cfg["workstations"]["operating_cost"],
         "flow_capacity":           cfg["layout"]["flow_capacity"],
         "transport_cost":          cfg["layout"]["transport_cost"],
         "seed":                    cfg["metadata"].get("seed"),

@@ -155,10 +155,10 @@ def layout():
     with open(store.CONFIG_PATH) as f:
         cfg = yaml.safe_load(f)
 
-    bom  = cfg.get("bom",            {})
-    ws   = cfg.get("workstations",   {})
-    cc   = cfg.get("configurations", {})
-    lay  = cfg.get("layout",         {})
+    bom  = cfg.get("bom",          {})
+    ws   = cfg.get("workstations", {})
+    cc   = cfg.get("workstations", {})
+    lay  = cfg.get("layout",       {})
     meta = cfg.get("metadata",       {})
 
     return html.Div([

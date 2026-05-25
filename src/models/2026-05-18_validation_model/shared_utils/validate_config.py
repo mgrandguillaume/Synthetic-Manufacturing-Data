@@ -22,10 +22,10 @@ Hard errors
   workstations.count >= 1
   workstations.count >= bom.depth  (every BOM level needs a workstation)
   workstations.stage_balance > 0 when set
-  configurations.producers_per_component[0] >= 1
-  configurations specifies assembly_type or processing_time (not neither)
+  workstations.producers_per_component[0] >= 1
+  workstations specifies assembly_type or processing_time (not neither)
   assembly_type in {low, medium, high}
-  configurations.variation in (0, 1) when assembly_type is used
+  workstations.variation in (0, 1) when assembly_type is used
   simulation.tick_duration > 0
   simulation.buffer_capacity >= bom.quantity[1]   ← E-NEW-1 (deadlock guard)
   simulation.buffer_capacity >= 1
@@ -40,11 +40,11 @@ Soft warnings
   W2  (removed — upgraded to hard error E-NEW-1)
   W3  total simulation horizon too short for even one order (includes branching)
   W4  weibull_lambda so small machines fail almost every tick
-  W5  producers_per_component[1] will be silently clamped in small stages
+  W5  workstations.producers_per_component[1] will be silently clamped in small stages
   W6  BOM explosion very large — quotes recommended n_ticks
   W7  theoretical worst-case availability A_worst < 0.5 (Hopp & Spearman Ch. 8; MTTF via Weibull theory)
   W8  buffer_capacity < branching_max x qty_max (heavy blocking expected)
-  W9  setup_time_max > 2x processing_time (changeover dominates)
+  W9  workstations.setup_time max > 2x processing_time (changeover dominates)
   W10 sweep grid contains invalid (depth, workstations_count) combinations
 
 Usage
@@ -167,7 +167,7 @@ def validate(cfg: dict) -> None:
     # ── Section shortcuts ──────────────────────────────────────────────────────
     bom   = cfg.get("bom",            {})
     ws    = cfg.get("workstations",   {})
-    cc    = cfg.get("configurations", {})
+    cc    = cfg.get("workstations",   {})
     lay   = cfg.get("layout",         {})
     sim   = cfg.get("simulation",     {})
     fail  = cfg.get("failures",       {})
@@ -243,10 +243,10 @@ def validate(cfg: dict) -> None:
     oc            = cc.get("operating_cost",  [None, None])
 
     if ppc[0] is None or ppc[0] < 1:
-        err(f"configurations.producers_per_component[0] (min) must be >= 1  (got {ppc[0]})")
+        err(f"workstations.producers_per_component[0] (min) must be >= 1  (got {ppc[0]})")
     if ppc[0] is not None and ppc[1] is not None and ppc[1] < ppc[0]:
         err(
-            f"configurations.producers_per_component[1] (max) must be >= [0] (min)  "
+            f"workstations.producers_per_component[1] (max) must be >= [0] (min)  "
             f"(got [{ppc[0]}, {ppc[1]}])"
         )
 
@@ -255,26 +255,26 @@ def validate(cfg: dict) -> None:
     if assembly_type is not None:
         if assembly_type not in _VALID_ASSEMBLY_TYPES:
             err(
-                f"configurations.assembly_type must be one of "
+                f"workstations.assembly_type must be one of "
                 f"{list(_VALID_ASSEMBLY_TYPES)}  (got '{assembly_type}')"
             )
         if not isinstance(variation, (int, float)) or not (0.0 < variation < 1.0):
             err(
-                f"configurations.variation must be a fraction in (0, 1)  "
+                f"workstations.variation must be a fraction in (0, 1)  "
                 f"(got {variation})  — e.g. 0.10 for +-10%"
             )
     elif pt[0] is not None or pt[1] is not None:
         # Legacy explicit range still supported.
-        _range("configurations.processing_time", pt[0], pt[1], pos=True)
+        _range("workstations.processing_time", pt[0], pt[1], pos=True)
     else:
         err(
-            "configurations must specify either 'assembly_type' (formula-based) "
+            "workstations must specify either 'assembly_type' (formula-based) "
             "or 'processing_time' (explicit [min, max] range)"
         )
 
-    _range("configurations.setup_time",     st[0], st[1])
-    _range("configurations.setup_cost",     sc[0], sc[1])
-    _range("configurations.operating_cost", oc[0], oc[1])
+    _range("workstations.setup_time",     st[0], st[1])
+    _range("workstations.setup_cost",     sc[0], sc[1])
+    _range("workstations.operating_cost", oc[0], oc[1])
 
     # ── Layout ────────────────────────────────────────────────────────────────
     cap = lay.get("flow_capacity",  [None, None])
@@ -401,7 +401,7 @@ def validate(cfg: dict) -> None:
         avg_ws_per_stage = n_ws / depth
         if ppc[1] > avg_ws_per_stage:
             warn(
-                f"configurations.producers_per_component max ({ppc[1]}) > "
+                f"workstations.producers_per_component max ({ppc[1]}) > "
                 f"average workstations per stage "
                 f"({n_ws} / {depth} = {avg_ws_per_stage:.1f})  "
                 f"— the upper bound will be silently clamped in stages with "
@@ -522,10 +522,10 @@ def validate(cfg: dict) -> None:
                 f"assembly_type='{assembly_type}' at depth={depth} "
                 f"-> pt_max ~{pt_max_h:.2f} h"
                 if assembly_type else
-                f"configurations.processing_time max = {pt[1]} h"
+                f"workstations.processing_time max = {pt[1]} h"
             )
             warn(
-                f"configurations.setup_time max ({st[1]} h) > "
+                f"workstations.setup_time max ({st[1]} h) > "
                 f"2 x processing_time max ({pt_max_h:.2f} h)  "
                 f"[{what}]  "
                 f"— changeover overhead dominates the machine's time budget.  "

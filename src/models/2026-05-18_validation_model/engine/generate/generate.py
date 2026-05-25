@@ -54,7 +54,7 @@ def generate_simple_assembly(config_path: str, export_csv: bool = True) -> dict:
 
     bom = cfg["bom"]
     ws  = cfg["workstations"]
-    cc  = cfg["configurations"]
+    cc  = cfg["workstations"]
     lay = cfg["layout"]
 
     # Resolve processing-time range: formula-based or legacy explicit range.
