@@ -130,8 +130,12 @@ def simulate(
     dfs = postprocess(pre, last_tick + 1, n_throughput)
 
     # ── Validate simulation output ─────────────────────────────────────────────
+    # Hard violations raise SimulateOutputError (real bugs — results discarded).
+    # Soft warnings are returned and attached to dfs so the UI can display them
+    # alongside the results without blocking the user.
     from engine.simulate.validate_output import validate as _validate_simulate
-    _validate_simulate(dfs, buffer_capacity, gen_result)
+    soft_warnings = _validate_simulate(dfs, buffer_capacity, gen_result)
+    dfs["warnings"] = soft_warnings   # list[str], empty when all checks pass
 
     return dfs
 

@@ -454,6 +454,13 @@ def _save_config(n_clicks,
             yaml.dump(new_cfg, f, default_flow_style=False,
                       allow_unicode=True, sort_keys=False)
 
+        # Clear the Simulate page's cached form values so the next visit reads
+        # the updated config instead of the stale last-run parameters.
+        # (sim_params is written after every Run Simulation click and takes
+        # priority over config defaults in layout() — clearing it here ensures
+        # Configure changes are visible immediately on the Simulate page.)
+        store.set("sim_params", None)
+
         # Return success + any soft warnings.
         children = [html.Div("Config saved.", className="alert alert-success")]
         if validate_warnings:

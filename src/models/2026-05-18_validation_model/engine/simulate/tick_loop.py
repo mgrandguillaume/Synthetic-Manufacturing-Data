@@ -270,8 +270,14 @@ def _numba_tick_loop(
                                 inp_ci  = bom_inputs[k]
                                 inp_qty = bom_qtys[k]
                                 if comp_level[inp_ci] > 0:
-                                    # ws_job_qty is always 1; restore 1 unit's inputs
-                                    stock[inp_ci] += inp_qty
+                                    # ws_job_qty is always 1; restore 1 unit's inputs.
+                                    # Clamp to buffer_capacity: if other workstations
+                                    # produced more of this component while this job
+                                    # was in progress, the buffer may be full and
+                                    # returning material unchecked would push stock
+                                    # above buffer_capacity.  Any excess is scrapped.
+                                    restored = stock[inp_ci] + inp_qty
+                                    stock[inp_ci] = restored if restored <= buffer_capacity else buffer_capacity
                             demand_assigned[di] = False
                             ws_job_demand[wi]   = -1
 
