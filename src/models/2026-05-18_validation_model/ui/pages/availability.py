@@ -12,8 +12,11 @@ dash.register_page(__name__, path="/availability", title="Availability")
 def _label(text): return html.Span(text, className="widget-label")
 
 def _num(id_, value, step=1, min_val=None):
+    # debounce=False: these inputs are read as States (not Inputs) in the
+    # callback, so debounce must be off — otherwise State captures the
+    # server-side (pre-debounce) value when the button is clicked.
     kw = dict(id=id_, type="number", value=value, step=step,
-              debounce=True, style={"width": "100%"})
+              debounce=False, style={"width": "100%"})
     if min_val is not None: kw["min"] = min_val
     return dcc.Input(**kw)
 
@@ -125,10 +128,10 @@ def layout():
         html.H2("Monte Carlo parameters"),
         html.Div([
             html.Div([_label("Replications"),
-                      _num("av-reps", 200, step=50, min_val=10)],
+                      _num("av-reps", 200, step=50, min_val=50)],
                      className="form-group"),
             html.Div([_label("Horizon (h)"),
-                      _num("av-horizon", 2000.0, step=500.0, min_val=100.0)],
+                      _num("av-horizon", 2000.0, step=500.0, min_val=500.0)],
                      className="form-group"),
             html.Div([_label("Warm-up (h)"),
                       _num("av-warmup", 200.0, step=50.0, min_val=0.0)],

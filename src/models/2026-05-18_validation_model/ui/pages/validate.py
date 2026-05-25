@@ -7,7 +7,7 @@ import store
 
 dash.register_page(__name__, path="/validate", title="Validate")
 
-_VALIDATE_DIR = os.path.join(store.MODEL_ROOT, "analysis", "validate", "validation_output")
+_VALIDATE_DIR = os.path.join(store.MODEL_ROOT, "analysis", "model_validation", "validation_output")
 _REPORT_PATH  = os.path.join(_VALIDATE_DIR, "validation_report.txt")
 
 
@@ -17,7 +17,7 @@ def _read_report() -> list:
         return [html.Div("Click Run validation to generate the report.",
                          className="alert alert-info")]
 
-    with open(_REPORT_PATH) as f:
+    with open(_REPORT_PATH, encoding="utf-8") as f:
         text = f.read()
 
     passed = store.get("validate_passed")
@@ -40,10 +40,10 @@ def _charts() -> list:
     val_csvs = [os.path.join(_VALIDATE_DIR, f)
                 for f in ["val_orders.csv","val_buffers.csv","val_availability.csv"]]
     if not all(os.path.exists(p) for p in val_csvs):
-        from analysis.validate.visualize_validation import generate_data
+        from analysis.model_validation.visualize_validation import generate_data
         generate_data(_VALIDATE_DIR)
 
-    from analysis.validate.visualize_validation import show as val_show
+    from analysis.model_validation.visualize_validation import show as val_show
     fig = val_show(_VALIDATE_DIR)
     return [html.H2("Diagnostic charts"), dcc.Graph(figure=fig)]
 
@@ -80,7 +80,7 @@ def layout():
 )
 def _run_validate(n_clicks):
     try:
-        from analysis.validate.validate import run_all
+        from analysis.model_validation.validate import run_all
         passed = run_all(show_charts=False, report_dir=_VALIDATE_DIR)
         store.set("validate_done",   True)
         store.set("validate_passed", passed)

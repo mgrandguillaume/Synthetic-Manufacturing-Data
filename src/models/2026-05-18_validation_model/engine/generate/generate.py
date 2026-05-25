@@ -142,6 +142,10 @@ def generate_from_params(params: dict, export_csv: bool = False,
         stage_balance = params.get("stage_balance", None),
     )
 
+    # ── Validate generated output ──────────────────────────────────────────────
+    from engine.generate.validate_output import validate as _validate_generate
+    _validate_generate(result)
+
     if export_csv and out_dir:
         write_csvs(result, out_dir)
         result["out_dir"] = out_dir

@@ -127,7 +127,13 @@ def simulate(
     print("  [Numba] Tick loop complete.")
 
     # ── Post-process: NumPy arrays → DataFrames ────────────────────────────────
-    return postprocess(pre, last_tick + 1, n_throughput)
+    dfs = postprocess(pre, last_tick + 1, n_throughput)
+
+    # ── Validate simulation output ─────────────────────────────────────────────
+    from engine.simulate.validate_output import validate as _validate_simulate
+    _validate_simulate(dfs, buffer_capacity, gen_result)
+
+    return dfs
 
 
 # ── Script entry point ─────────────────────────────────────────────────────────

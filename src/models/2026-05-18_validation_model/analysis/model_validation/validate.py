@@ -161,7 +161,7 @@ def run_all(
 
     # ── Generate chart data and (optionally) show charts ─────────────────────────
     try:
-        from validate import visualize_validation as _vv
+        from . import visualize_validation as _vv
         print("\n  Generating validation chart data…")
         _vv.generate_data(report_dir)
         if show_charts:
