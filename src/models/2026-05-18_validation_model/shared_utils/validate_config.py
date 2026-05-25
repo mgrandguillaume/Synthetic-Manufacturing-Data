@@ -42,7 +42,7 @@ Soft warnings
   W4  weibull_lambda so small machines fail almost every tick
   W5  producers_per_component[1] will be silently clamped in small stages
   W6  BOM explosion very large — quotes recommended n_ticks
-  W7  failures.mttr_max > failures.weibull_lambda_min (availability near zero)
+  W7  theoretical worst-case availability A_worst < 0.5 (Hopp & Spearman Ch. 8; MTTF via Weibull theory)
   W8  buffer_capacity < branching_max x qty_max (heavy blocking expected)
   W9  setup_time_max > 2x processing_time (changeover dominates)
   W10 sweep grid contains invalid (depth, workstations_count) combinations
@@ -443,25 +443,51 @@ def validate(cfg: dict) -> None:
                 f"Current n_ticks={n_ticks:,} — consider increasing it."
             )
 
-    # ── W7 — repair time exceeds machine lifetime (failures) ──────────────────
-    # If mttr_max > weibull_lambda_min, there exist workstations whose expected
-    # repair duration is longer than their characteristic life.  Steady-state
-    # availability for those machines is A = MTTF / (MTTF + MTTR) << 0.5,
-    # potentially approaching zero.
+    # ── W7 — low machine availability ────────────────────────────────────────────
+    #
+    # For a Weibull failure distribution with shape β and scale λ (hours) the
+    # mean time to failure is:
+    #     MTTF = λ · Γ(1 + 1/β)
+    #     (standard Weibull distribution expectation formula — not from H&S)
+    #
+    # The long-run availability is (Hopp & Spearman, Ch. 8):
+    #     A = MTTF / (MTTF + MTTR_mean)
+    #
+    # The worst-case availability (most fragile machine) uses the smallest
+    # possible MTTF and the largest possible MTTR:
+    #     MTTF_min  = lambda_min · Γ(1 + 1/beta_max)
+    #     A_worst   = MTTF_min / (MTTF_min + mttr_max)
+    #
+    # Warn when A_worst < 0.5 (machine spends more time under repair than
+    # producing).  This is a much more precise signal than the old raw
+    # comparison of MTTR vs λ.
     if failures_enabled:
+        wb_check   = fail.get("weibull_beta",   [None, None])
         wl_check   = fail.get("weibull_lambda", [None, None])
         mttr_check = fail.get("mttr",           [None, None])
-        if None not in (wl_check[0], mttr_check[1]):
-            if mttr_check[1] > wl_check[0]:
-                warn(
-                    f"failures.mttr max ({mttr_check[1]} h) > "
-                    f"failures.weibull_lambda min ({wl_check[0]} h)  "
-                    f"— for the shortest-lived machines, the worst-case repair "
-                    f"duration exceeds the characteristic life.  "
-                    f"Steady-state availability A = MTTF / (MTTF + MTTR) may "
-                    f"be very low (< 0.5) for some workstations.  "
-                    f"Consider mttr[1] <= weibull_lambda[0] ({wl_check[0]} h)."
-                )
+        if None not in (wb_check[1], wl_check[0], mttr_check[1]):
+            try:
+                mttf_min = wl_check[0] * math.gamma(1.0 + 1.0 / wb_check[1])
+                a_worst  = mttf_min / (mttf_min + mttr_check[1])
+                if a_worst < 0.5:
+                    warn(
+                        f"Low machine availability predicted for the worst-case "
+                        f"workstation configuration.  "
+                        f"Using Weibull parameters (lambda_min={wl_check[0]} h, "
+                        f"beta_max={wb_check[1]}):  "
+                        f"MTTF_min = lambda_min · Gamma(1 + 1/beta_max) "
+                        f"= {mttf_min:.2f} h  [Weibull distribution formula].  "
+                        f"With mttr_max={mttr_check[1]} h:  "
+                        f"A_worst = MTTF / (MTTF + MTTR) = {a_worst:.2f}  "
+                        f"[Hopp & Spearman, Ch. 8]  "
+                        f"— machines with these parameters spend more than half "
+                        f"their time under repair.  "
+                        f"Throughput will be heavily reduced.  "
+                        f"Consider increasing weibull_lambda[0] or "
+                        f"reducing failures.mttr[1] so that A_worst >= 0.5."
+                    )
+            except (ValueError, ZeroDivisionError):
+                pass   # skip if parameters are invalid (already caught by hard errors)
 
     # ── W8 — buffer too small relative to BOM fan-in (heavy blocking) ─────────
     # A downstream workstation assembling one output unit simultaneously consumes

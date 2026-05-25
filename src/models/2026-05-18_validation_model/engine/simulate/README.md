@@ -271,13 +271,143 @@ Reads the output arrays written by the tick loop and constructs five DataFrames:
 | Key | Content |
 |---|---|
 | `states` | One row per (tick, workstation): tick index, simulated time (h), and state name |
-| `utilization` | One row per workstation: total hours and percentage in each of the 6 states |
+| `utilization` | One row per workstation: total hours and percentage in each of the 6 states, plus Factory Physics metrics (see below) |
 | `throughput` | One row per completed order: completion time, order number, product ID, lead time |
 | `costs` | One row per workstation: setup, operating, transport, and repair costs |
 | `buffers` | One row per (tick, component): stock level over time (empty if `log_buffers=False`) |
 
 `utilization` always includes `Failed` and `FailedPct` columns (zero when
 failures are disabled).  `costs` always includes a `RepairCost` column.
+
+---
+
+## Factory Physics metrics in the utilization output
+
+> **Primary source:** Hopp, W. J., & Spearman, M. L. (2008). *Factory Physics*
+> (3rd ed.). Waveland Press. Chapters 7 and 8.
+>
+> The MTTF formula comes from standard Weibull distribution theory, not from
+> Hopp & Spearman directly (see note below).
+
+The `utilization` DataFrame includes four additional columns derived analytically
+from the sampled Weibull failure parameters.  These are *theoretical* predictions
+computed before any simulation result is needed; they can therefore be used to
+reason about the factory's expected behaviour before or after running the
+simulation.
+
+### MTTF — Mean time to failure
+
+For a workstation whose failure inter-arrival times follow a Weibull distribution
+with shape parameter **β** and scale parameter **λ** (hours), the mean time
+between failures is:
+
+```
+MTTF = λ · Γ(1 + 1/β)
+```
+
+where Γ is the standard gamma function.
+
+> **⚠ Citation note:** This formula is the expectation of the Weibull
+> distribution — standard probability theory.  Hopp & Spearman (Ch. 8) use a
+> generic symbol *m₀* for mean time to failure without specifying the underlying
+> failure distribution or this formula.  The Weibull parameterisation is a model
+> design choice, not a prescription from the book.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `MTTF_h` | float or None | Theoretical MTTF in hours; `None` when failures are disabled |
+
+The values of `ws_lambda` and `ws_beta` used here are the per-workstation
+samples drawn in `preprocess.py` from the configured ranges — so each
+workstation gets its own MTTF.
+
+### Availability
+
+The long-run fraction of time a workstation is operational (not under repair).
+Following Hopp & Spearman (Ch. 8), where *m₀* = mean time to failure and
+*mᵣ* = mean repair time:
+
+```
+A = m₀ / (m₀ + mᵣ)   →   A = MTTF / (MTTF + MTTR_mean)
+```
+
+> **Model adaptation:** Hopp & Spearman use generic *mᵣ* (mean repair time).
+> Because the configuration specifies a repair-time range `[mttr_min, mttr_max]`,
+> this model uses `MTTR_mean = (mttr_min + mttr_max) / 2` as *mᵣ*.  This is a
+> practical approximation; the book does not specify a particular repair-time
+> distribution.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `Availability` | float [0, 1] | Theoretical long-run uptime fraction; 1.0 when failures are disabled |
+
+A value of 0.80 means the machine is expected to be operational 80 % of the
+time; it spends 20 % under repair on average.
+
+### Effective process time — Hopp & Spearman Equation 8.2
+
+Machine failures inflate the time to produce each unit beyond the natural
+(failure-free) processing time **t₀**.  Hopp & Spearman (Eq. 8.2) give the
+**effective process time**:
+
+```
+t_e = t₀ / A
+```
+
+A workstation with `A = 0.80` takes on average 25 % longer to produce each
+unit than a fully reliable machine, because it is unavailable 20 % of the time.
+This relationship holds regardless of whether failures occur during a job or
+between jobs — the availability penalty applies uniformly over the long run.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `t_e_h` | float | Effective process time per unit (hours), including availability penalty |
+
+`t₀` is the mean processing time averaged over all components the workstation
+is capable of making (mean over all capable `(workstation, component)` pairs
+from the configuration matrix).  When failures are disabled, `t_e_h = t₀`.
+
+The simulation already realises `t_e` implicitly: when a machine fails mid-job,
+the job stalls until repair is complete, naturally inflating the wall-clock time
+per unit.  Reporting `t_e_h` makes this effect explicit and comparable across
+workstations without needing to observe many simulation runs.
+
+### Predicted bottleneck
+
+The **bottleneck** is the workstation that limits the factory's maximum
+throughput.  Hopp & Spearman (Ch. 7) define it as the workstation with the
+highest utilization:
+
+```
+u = r / r_e,   where r_e = m / t_e   (effective capacity rate)
+```
+
+For a fixed demand rate *r*, the station with the highest `t_e` has the lowest
+`r_e` and therefore the highest utilization — making it the bottleneck.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `IsPredictedBottleneck` | bool | `True` for the one workstation with the highest `t_e_h` |
+
+> **Multi-product note:** In a multi-product BOM factory the demand rate *r*
+> differs per workstation (depending on which products it serves), so the true
+> bottleneck also depends on BOM structure and product mix.  The prediction here
+> (highest `t_e`) is an approximation valid for single-product serial lines and
+> a useful heuristic otherwise.  Compare `IsPredictedBottleneck` against the
+> empirically highest `BusyPct` after a simulation run to assess accuracy.
+
+### Example interpretation
+
+```
+Workstation  t0_h  MTTF_h  A      t_e_h   IsPredictedBottleneck
+WS_1         1.20  45.3    0.90   1.33    False
+WS_3         0.95  18.7    0.79   1.20    False
+WS_7         1.05  22.1    0.82   1.28    True    ← predicted bottleneck
+```
+
+WS_7 has a lower natural processing time than WS_1, but its lower availability
+(A = 0.82 vs 0.90) inflates its effective rate enough to make it the binding
+constraint.
 
 ---
 

@@ -41,6 +41,7 @@ The sidebar groups pages into **Engine** (Generate, Simulate) and **Analyse** (S
   - [Machine failures](#machine-failures)
   - [What it does](#what-it-does)
   - [Output files](#output-files-1)
+  - [Factory Physics metrics in utilization.csv](#factory-physics-metrics-in-utilizationcsv)
 - [Sweep](#sweep)
   - [Parameter groups](#parameter-groups)
   - [Alpha (α)](#alpha-α)
@@ -623,10 +624,67 @@ Each workstation spends every tick in exactly one of six states. At the end of t
 | File | Contents |
 |---|---|
 | `states.csv` | Per-tick record of every workstation's state (`idle`, `setup`, `processing`, `blocked`, `starved`, or `failed`) |
-| `utilization.csv` | Time (hours) and percentage spent in each of the six states per workstation (includes `Failed` and `FailedPct`) |
+| `utilization.csv` | Time (hours) and percentage spent in each of the six states per workstation, plus Factory Physics availability metrics (see below) |
 | `throughput.csv` | Completion time, cumulative order count, and lead time for each finished order |
 | `costs.csv` | Setup, operating, transport, and repair costs aggregated per workstation (includes `RepairCost`) |
 | `buffers.csv` | Stock level of every non-raw component buffer at every tick |
+
+---
+
+### Factory Physics metrics in `utilization.csv`
+
+> **Primary source:** Hopp, W. J., & Spearman, M. L. (2008). *Factory Physics* (3rd ed.).
+> Waveland Press. Chapters 7–8.
+>
+> The MTTF formula is from standard Weibull distribution theory, not from Hopp & Spearman
+> directly (see note below).
+
+The `utilization.csv` file (and the in-memory `utilization` DataFrame) includes four additional columns derived analytically from each workstation's sampled Weibull failure parameters. These give theoretical predictions that can be compared against the empirical simulation results.
+
+**`MTTF_h`** — Mean time to failure (hours)
+
+For a Weibull failure distribution with shape **β** and scale **λ** (hours), the theoretical mean time between failures is:
+
+```
+MTTF = λ · Γ(1 + 1/β)
+```
+
+where Γ is the gamma function. `None` when failures are disabled.
+
+> ⚠ **Citation note:** This formula is the expectation of the Weibull distribution —
+> standard probability theory. Hopp & Spearman (Ch. 8) use a generic symbol *m₀* for mean
+> time to failure without specifying the failure distribution or this formula. The choice of
+> Weibull parameterisation is a design decision of this model, not a prescription from the book.
+
+**`Availability`** — Long-run uptime fraction
+
+Following Hopp & Spearman (Ch. 8), where *m₀* = mean time to failure and *mᵣ* = mean repair time:
+
+```
+A = m₀ / (m₀ + mᵣ)   →   A = MTTF / (MTTF + MTTR_mean)
+```
+
+A value of 0.80 means the machine is operational 80 % of the time. Always 1.0 when failures are disabled.
+
+> **Model adaptation:** The config specifies a repair-time range `[mttr_min, mttr_max]`; this
+> model uses `MTTR_mean = (mttr_min + mttr_max) / 2` as *mᵣ*. The book uses a generic
+> *mᵣ* without specifying a repair-time distribution.
+
+**`t_e_h`** — Effective process time (hours per unit) — *Hopp & Spearman, Equation 8.2*
+
+Failures inflate the natural (failure-free) processing time **t₀** to an effective process time:
+
+```
+t_e = t₀ / A                   [Hopp & Spearman, Eq. 8.2]
+```
+
+A machine with A = 0.80 takes 25 % longer per unit than a failure-free machine. `t₀` is the mean processing time averaged over all components the workstation can produce. When failures are disabled, `t_e_h = t₀`.
+
+**`IsPredictedBottleneck`** — Theoretical bottleneck flag
+
+Hopp & Spearman (Ch. 7) define the bottleneck as the workstation with the highest utilization `u = r / r_e`, where `r_e = m / t_e` is effective capacity. For a fixed demand rate *r*, the station with the highest `t_e` has the lowest `r_e` and therefore the highest utilization, making it the bottleneck.
+
+In a multi-product BOM factory the demand rate differs per workstation, so this is an approximation; it correctly identifies the machine most penalised by failures and long processing times.
 
 ---
 

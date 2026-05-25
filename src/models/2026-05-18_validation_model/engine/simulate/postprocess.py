@@ -14,9 +14,52 @@ postprocess(pre, actual_ticks, n_throughput) -> dict[str, pd.DataFrame]
 
 Returns a dict with keys: 'states', 'utilization', 'throughput',
 'costs', 'buffers'.
+
+Factory Physics metrics
+-----------------------
+The utilization DataFrame includes additional columns based on concepts from
+Hopp & Spearman, *Factory Physics* (3rd ed., 2008), Chapters 7–8.
+
+  MTTF_h          — mean time to failure (hours) per workstation.
+                    The simulator draws failure inter-arrival times from a
+                    Weibull(λ, β) distribution; the exact mean is:
+                        MTTF = λ · Γ(1 + 1/β)
+                    where Γ is the standard gamma function.
+                    NOTE: this formula comes from Weibull distribution
+                    theory, not from Hopp & Spearman directly.  The book
+                    uses a generic m_0 (mean time to failure) without
+                    tying it to a specific failure distribution.
+
+  Availability    — long-run fraction of time the machine is operational.
+                    Following Hopp & Spearman (Ch. 8), availability is:
+                        A = m_0 / (m_0 + m_r)
+                    where m_0 = MTTF and m_r = mean repair time (MTTR_mean).
+                    In this model MTTR_mean = (mttr_min + mttr_max) / 2.
+
+  t_e_h           — effective process time (hours): the mean time to produce
+                    one unit when machine failures are accounted for.
+                    Hopp & Spearman, Equation 8.2:
+                        t_e = t_0 / A
+                    where t_0 is the mean natural (failure-free) processing
+                    time averaged over all components the workstation can make.
+
+  IsPredictedBottleneck — True for the workstation with the highest t_e.
+                    Hopp & Spearman (Ch. 7) define the bottleneck as the
+                    workstation with the highest utilization (u = r / r_e),
+                    where r_e = m / t_e is effective capacity.  For a fixed
+                    demand rate r, this is exactly the station with the
+                    highest t_e.  In a multi-product factory the demand mix
+                    matters too, so this is an approximation; it correctly
+                    flags the machine most penalised by failures and long
+                    processing times.
+
+When failures are disabled, A = 1, MTTF_h = None, and t_e_h = t_0
+(the mean processing time; no availability penalty).
 """
 
 from __future__ import annotations
+
+import math
 
 import numpy as np
 import pandas as pd
@@ -52,10 +95,10 @@ def postprocess(
     log_buffers    = pre["log_buffers"]
     n_ws           = pre["n_ws"]
 
-    state_log       = pre["state_log"]
-    tp_log          = pre["tp_log"]
-    buf_log         = pre["buf_log"]
-    cost_setup_arr  = pre["cost_setup_arr"]
+    state_log          = pre["state_log"]
+    tp_log             = pre["tp_log"]
+    buf_log            = pre["buf_log"]
+    cost_setup_arr     = pre["cost_setup_arr"]
     cost_operating_arr = pre["cost_operating_arr"]
     cost_transport_arr = pre["cost_transport_arr"]
     cost_repair_arr    = pre["cost_repair_arr"]
@@ -71,6 +114,84 @@ def postprocess(
                         for t, wi in zip(tick_idx, wi_idx)],
     })
 
+    # ── Factory Physics: effective process time and availability ───────────────
+    #
+    # For each workstation the following quantities are computed:
+    #
+    #   MTTF (mean time to failure, hours)
+    #     The simulator uses Weibull(λ, β) inter-failure times.  The mean of
+    #     a Weibull distribution is:
+    #         MTTF = λ · Γ(1 + 1/β)
+    #     where Γ is the standard gamma function.
+    #     This is standard Weibull distribution theory, not specific to
+    #     Hopp & Spearman.  The book (Ch. 8) uses a generic m_0 = mean time
+    #     to failure without specifying the underlying failure distribution.
+    #
+    #   Availability A
+    #     Hopp & Spearman (Ch. 8) define availability as:
+    #         A = m_0 / (m_0 + m_r)
+    #     where m_0 = MTTF and m_r = mean repair time (MTTR).
+    #     Here MTTR_mean = (mttr_min + mttr_max) / 2 is used as m_r because
+    #     the config specifies a uniform repair-time range; this is a model
+    #     adaptation, not stated in the book.
+    #
+    #   Effective process time t_e  (Hopp & Spearman, Eq. 8.2)
+    #     Failures inflate the time to produce each unit from the natural
+    #     (failure-free) process time t_0:
+    #         t_e = t_0 / A
+    #     t_0 is the mean processing time across all components this workstation
+    #     is capable of making (mean over capable (ws, comp) configuration pairs).
+    #
+    #   Predicted bottleneck
+    #     Hopp & Spearman (Ch. 7) define the bottleneck as the workstation with
+    #     the highest utilization u = r / r_e, where r_e = m / t_e is its
+    #     effective capacity rate.  For a fixed demand rate r, the station with
+    #     the highest t_e has the lowest r_e and hence the highest u.  In a
+    #     multi-product factory the demand mix varies by station, so this is an
+    #     approximation; it flags the machine most penalised by failures.
+    #
+    # When failures are disabled, MTTF = ∞, A = 1, and t_e = t_0.
+
+    ws_beta          = pre["ws_beta"]
+    ws_lambda        = pre["ws_lambda"]
+    capable          = pre["capable"]
+    proc_time_m      = pre["proc_time_m"]
+    mttr_min         = pre["mttr_min"]
+    mttr_max         = pre["mttr_max"]
+    failures_enabled = pre["failures_enabled"]
+
+    mttr_mean = (mttr_min + mttr_max) / 2.0
+
+    # Build per-workstation Factory Physics metrics keyed by ws_id.
+    _fp: dict[str, dict] = {}
+    for wi, ws_id in enumerate(ws_ids):
+        # t_0: mean processing time over all components this workstation can make.
+        capable_mask = capable[wi]                       # bool array [n_comps]
+        capable_pts  = proc_time_m[wi][capable_mask]    # processing times for capable pairs
+        t0 = float(np.mean(capable_pts)) if len(capable_pts) > 0 else 0.0
+
+        if failures_enabled and ws_lambda[wi] > 0 and ws_beta[wi] > 0:
+            # Weibull MTTF: E[X] = λ·Γ(1+1/β)  (standard Weibull distribution formula)
+            mttf  = ws_lambda[wi] * math.gamma(1.0 + 1.0 / ws_beta[wi])
+            denom = mttf + mttr_mean
+            avail = mttf / denom if denom > 0 else 1.0
+            t_e   = t0 / avail if avail > 0 else float("inf")
+            _fp[ws_id] = {
+                "MTTF_h":      round(mttf,  4),
+                "Availability": round(avail, 4),
+                "t_e_h":        round(t_e,   4),
+            }
+        else:
+            # Failures disabled: machine is always available.
+            _fp[ws_id] = {
+                "MTTF_h":      None,   # undefined when failures are off
+                "Availability": 1.0,
+                "t_e_h":        round(t0, 4),
+            }
+
+    # Predicted bottleneck: workstation with the highest t_e.
+    bottleneck_id = max(_fp, key=lambda ws_id: _fp[ws_id]["t_e_h"])
+
     # ── Utilization DataFrame ──────────────────────────────────────────────────
     util_rows = []
     for ws_id in sorted(ws_ids):
@@ -79,7 +200,9 @@ def postprocess(
         total  = actual_ticks
         counts = {s: int(np.sum(col == i)) for i, s in enumerate(_STATE_NAMES)}
         h      = {s: counts[s] * tick_duration for s in counts}
+        fp     = _fp[ws_id]
         util_rows.append({
+            # ── Observed time-in-state ─────────────────────────────────────────
             "Workstation": ws_id,
             "Busy":        h["processing"],
             "Setup":       h["setup"],
@@ -93,6 +216,11 @@ def postprocess(
             "StarvedPct":  100.0 * counts["starved"]    / total if total else 0.0,
             "IdlePct":     100.0 * counts["idle"]       / total if total else 0.0,
             "FailedPct":   100.0 * counts["failed"]     / total if total else 0.0,
+            # ── Factory Physics metrics ────────────────────────────────────────
+            "MTTF_h":              fp["MTTF_h"],        # Weibull MTTF = λ·Γ(1+1/β) [Weibull theory]
+            "Availability":        fp["Availability"],  # A = MTTF/(MTTF+MTTR)  [H&S Ch. 8]
+            "t_e_h":               fp["t_e_h"],         # t_e = t_0/A  [H&S Eq. 8.2]
+            "IsPredictedBottleneck": ws_id == bottleneck_id,
         })
     util_df = pd.DataFrame(util_rows)
 
