@@ -40,7 +40,7 @@ _NAV = [
 def _sidebar() -> html.Nav:
     """Build the static sidebar skeleton; active link is set by callback."""
     sections: list = [
-        html.Div("Synthetic Data Generation", className="sidebar-brand"),
+        html.Div("Synthetic Manufacturing Data Generation", className="sidebar-brand"),
     ]
 
     current_section = object()  # sentinel so first section always triggers

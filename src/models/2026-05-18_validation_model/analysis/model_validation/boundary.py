@@ -157,9 +157,9 @@ def _test_full_sharing() -> tuple[str, bool, str]:
     gen_params = _gen(
         depth         = depth,
         sharing_ratio = 1.0,
-        n_products    = 1,
-        branching     = [2, 2, 2],
-        quantity      = [1, 1, 1],
+        n_products    = 2,      # second product must reuse all of the first's components
+        branching     = [1, 1], # exactly 1 child per node — sharing can always apply
+        quantity      = [1, 1],
         workstations_count = depth,    # at least depth workstations
     )
     gen_result = generate_from_params(gen_params)
