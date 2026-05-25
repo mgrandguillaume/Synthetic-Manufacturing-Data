@@ -4,15 +4,20 @@ This model generates and simulates a small synthetic assembly factory driven by 
 
 ## Running the UI
 
-The primary interface is a Streamlit web app. From the model root directory:
+The primary interface is a Dash web app. Launch it from the `ui/` directory:
 
 ```bash
-streamlit run ui/home.py
-# or
-python -m 2026-05-18_validation_model   # from src/models/
+cd ui
+python app.py
 ```
 
-The sidebar groups pages into **Engine** (Generate, Simulate) and **Analyse** (Sweep, Validate, Availability). The **Configure** page lets you edit `config.yaml` directly without leaving the browser. All sections below describe the underlying logic; see the UI for the interactive interface.
+Or from the model root:
+
+```bash
+python ui/app.py
+```
+
+Then open **http://127.0.0.1:8501** in your browser. The sidebar groups pages into **Engine** (Generate, Simulate) and **Analyse** (Sweep, Validate, Availability). The **Configure** page lets you edit `config.yaml` directly without leaving the browser. All sections below describe the underlying logic; see the UI for the interactive interface.
 
 ---
 
@@ -43,6 +48,7 @@ The sidebar groups pages into **Engine** (Generate, Simulate) and **Analyse** (S
   - [Output files](#output-files-1)
   - [Factory Physics metrics in utilization.csv](#factory-physics-metrics-in-utilizationcsv)
 - [Sweep](#sweep)
+  - [Performance notes](#performance-notes)
   - [Parameter groups](#parameter-groups)
   - [Alpha (α)](#alpha-α)
   - [Output files](#output-files-2)
@@ -707,6 +713,36 @@ Large sweep grids can produce hundreds or thousands of combinations. The **Limit
 The random sample is reproducible: if `metadata.seed` is set in `config.yaml`, the same seed is used for sampling, so the same *N* runs are selected every time the sweep is triggered with that configuration. When `metadata.seed` is `null`, a fresh random sample is drawn each time.
 
 The UI field accepts any integer between 1 and the total combination count. Leave it blank to run all combinations.
+
+### Performance notes
+
+Large sweeps can produce very large output files and long runtimes. The UI shows a warning banner for each condition that applies. The table below lists every condition that is checked, the threshold that triggers it, and why it matters.
+
+| Condition | Threshold | Why it matters |
+|---|---|---|
+| **BOM depth** | any swept `depth` value > 4 | Component count grows as `branching_max ^ depth`. Each additional level multiplies components, workstation assignments, BOM-explosion work per order, and the number of ticks needed for the factory to drain — per-run time can increase by an order of magnitude between depth 4 and depth 6. |
+| **Tick count** | `n_ticks` > 10 000 | `state_summary.csv` stores one row per **(run, tick)**, so its total row count equals `n_valid_runs × n_ticks`. At 80 runs × 56 000 ticks this is 4.5 million rows (≈ 270 MB). The visualiser reads this file with a chunked loader to avoid running out of memory, but loading time still scales with the total row count. |
+| **Order count** | `n_orders` > 100 | Per-run simulation time scales linearly with `n_orders` because each order triggers a full BOM explosion and is tracked through the factory until completion. Total orders processed across the sweep equals `n_valid_runs × n_orders`. |
+| **Branching × depth** | `bom.branching` max > 3 **and** max swept depth > 3 | Component count ≈ `branching_max ^ depth`. A branching factor of 4 at depth 5 already creates ~1 000 components; at depth 7 that is ~16 000. Each component needs workstation assignments, buffer slots, and BOM edge tracking — all of which scale the per-run cost super-linearly. |
+| **Large state_summary** | `n_valid_runs × n_ticks` ≥ 1 000 000 | Fires when a wide grid (many runs) drives the state_summary row count past one million even at a moderate tick count (e.g. 500 runs × 5 000 ticks = 2.5 M rows). Separate from the n_ticks warning above. |
+
+**Estimated state_summary size formula:**
+
+```
+rows  ≈  n_valid_runs  ×  n_ticks
+size  ≈  rows  ×  ~60 bytes/row
+```
+
+For example: 200 runs × 20 000 ticks = 4 000 000 rows ≈ 240 MB.
+
+**Recommendations for large sweeps:**
+
+- Use the **Limit to N runs** field to randomly sample a smaller subset of the grid before committing to the full sweep.
+- Set `n_ticks` to the minimum needed: many factory configurations complete all orders well before the tick limit. Check the single-run Simulate page to find a reasonable upper bound before sweeping.
+- Keep `bom.depth` ≤ 4 in the sweep grid unless you are specifically studying the effect of deep BOMs; the exponential growth in component count means each depth increment is much more expensive than the last.
+- A `metadata.seed` in `config.yaml` makes sub-sampled sweeps reproducible — the same random combination selection is used every time the same seed and limit are applied.
+
+---
 
 ### Parameter groups
 

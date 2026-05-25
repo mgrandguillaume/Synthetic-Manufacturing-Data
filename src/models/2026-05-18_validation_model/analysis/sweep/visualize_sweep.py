@@ -65,6 +65,50 @@ _COST_SHARE_SERIES = [
 ]
 
 
+def _load_state_mean(path: str, max_plot_points: int = 1500) -> pd.DataFrame:
+    """
+    Read state_summary.csv efficiently without loading it all into RAM.
+
+    Large sweeps produce one row per (run × tick), so state_summary.csv can
+    easily exceed hundreds of MB.  This helper reads the file in 200 000-row
+    chunks, accumulates the per-tick sum and count incrementally, then computes
+    the mean from those accumulators.  Only the five needed columns are read.
+
+    After aggregation the result is downsampled to at most *max_plot_points*
+    evenly-spaced ticks so the Plotly CLEMATIS chart stays responsive.
+    """
+    _state_cols = ["WorkingPct", "StarvedPct", "BlockedPct", "FailedPct"]
+    _read_cols  = ["Tick"] + _state_cols
+
+    sum_df:   pd.DataFrame | None = None
+    count_ser: pd.Series   | None = None
+
+    for chunk in pd.read_csv(path, chunksize=200_000, usecols=_read_cols):
+        present = [c for c in _state_cols if c in chunk.columns]
+        grp     = chunk.groupby("Tick")
+        c_sum   = grp[present].sum()
+        c_cnt   = grp.size().rename("_n")
+
+        if sum_df is None:
+            sum_df    = c_sum
+            count_ser = c_cnt
+        else:
+            sum_df    = sum_df.add(c_sum,  fill_value=0)
+            count_ser = count_ser.add(c_cnt, fill_value=0)
+
+    if sum_df is None:
+        return pd.DataFrame(columns=_read_cols)
+
+    mean_df = sum_df.div(count_ser, axis=0).reset_index()
+
+    # Downsample to keep the chart lightweight (e.g. 4.5 M rows → 1 500 points).
+    if len(mean_df) > max_plot_points:
+        step    = max(1, len(mean_df) // max_plot_points)
+        mean_df = mean_df.iloc[::step].reset_index(drop=True)
+
+    return mean_df
+
+
 def show(sweep_dir: str = _DEFAULT_SWEEP_DIR) -> None:
     """
     Build and display all twelve sweep charts.
@@ -76,11 +120,13 @@ def show(sweep_dir: str = _DEFAULT_SWEEP_DIR) -> None:
     """
 
     # ── Load data ──────────────────────────────────────────────────────────────
-    gen_stats_df     = pd.read_csv(os.path.join(sweep_dir, "gen_stats.csv"))
-    state_summary_df = pd.read_csv(os.path.join(sweep_dir, "state_summary.csv"))
-    throughput_df    = pd.read_csv(os.path.join(sweep_dir, "throughput.csv"))
-    utilization_df   = pd.read_csv(os.path.join(sweep_dir, "utilization.csv"))
-    costs_df         = pd.read_csv(os.path.join(sweep_dir, "costs.csv"))
+    # state_summary.csv can be very large (hundreds of MB for wide sweeps).
+    # Use the chunked helper instead of a plain read_csv to avoid OOM.
+    gen_stats_df    = pd.read_csv(os.path.join(sweep_dir, "gen_stats.csv"))
+    throughput_df   = pd.read_csv(os.path.join(sweep_dir, "throughput.csv"))
+    utilization_df  = pd.read_csv(os.path.join(sweep_dir, "utilization.csv"))
+    costs_df        = pd.read_csv(os.path.join(sweep_dir, "costs.csv"))
+    state_mean_tick = _load_state_mean(os.path.join(sweep_dir, "state_summary.csv"))
 
     # ── Compute per-run simulation metrics ─────────────────────────────────────
     makespan = (
@@ -110,8 +156,14 @@ def show(sweep_dir: str = _DEFAULT_SWEEP_DIR) -> None:
         .reset_index().rename(columns={"LeadTime": "MeanLeadTime"})
     )
 
-    sweep_params_cols = ["RunID", "alpha", "n_products", "depth",
-                         "workstations_count", "sharing_ratio"]
+    # Detect which sweep-parameter columns are actually present in the CSV —
+    # only swept parameters are written as tag columns, so hardcoding the full
+    # list would cause a KeyError when a parameter is held fixed in the config.
+    _candidate_cols = ["n_products", "depth", "workstations_count", "sharing_ratio"]
+    sweep_params_cols = (
+        ["RunID", "alpha"]
+        + [c for c in _candidate_cols if c in throughput_df.columns]
+    )
     run_params = throughput_df[sweep_params_cols].drop_duplicates("RunID")
 
     sim_metrics = (
@@ -137,21 +189,18 @@ def show(sweep_dir: str = _DEFAULT_SWEEP_DIR) -> None:
     cost_share_run["SetupFrac"] = cost_share_run["SetupCost"]     / cost_share_run["Total"] * 100
     cost_share_run["OpFrac"]    = cost_share_run["OperatingCost"] / cost_share_run["Total"] * 100
     cost_share_run["TransFrac"] = cost_share_run["TransportCost"] / cost_share_run["Total"] * 100
-    cost_share_run = cost_share_run.merge(run_params[["RunID", "sharing_ratio"]], on="RunID")
-    cost_share_by_ratio = (
-        cost_share_run.groupby("sharing_ratio")[["SetupFrac", "OpFrac", "TransFrac"]]
-        .mean().reset_index()
-    )
+    if "sharing_ratio" in run_params.columns:
+        cost_share_run = cost_share_run.merge(run_params[["RunID", "sharing_ratio"]], on="RunID")
+        cost_share_by_ratio = (
+            cost_share_run.groupby("sharing_ratio")[["SetupFrac", "OpFrac", "TransFrac"]]
+            .mean().reset_index()
+        )
+    else:
+        cost_share_by_ratio = pd.DataFrame(
+            columns=["sharing_ratio", "SetupFrac", "OpFrac", "TransFrac"]
+        )
 
-    # ── Sweep-wide mean state % per tick (CLEMATIS summary) ───────────────────
-    _state_cols = [c for c in ["WorkingPct", "StarvedPct", "BlockedPct", "FailedPct"]
-                   if c in state_summary_df.columns]
-    state_mean_tick = (
-        state_summary_df
-        .groupby("Tick")[_state_cols]
-        .mean()
-        .reset_index()
-    )
+    # state_mean_tick is already computed by _load_state_mean() above.
 
     # ── Legend positions ───────────────────────────────────────────────────────
     # 5 rows × 2 cols, vertical_spacing=0.10
@@ -212,8 +261,12 @@ def show(sweep_dir: str = _DEFAULT_SWEEP_DIR) -> None:
         showarrow=False, font=SECTION_FONT, align="center",
     )
 
+    # Helper: use a split column only if it is present in the DataFrame.
+    def _split(df, col):
+        return col if col in df.columns else None
+
     # ── Row 1 — Generation: component count & config count ────────────────────
-    for i, s in enumerate(_group_mean(gen_stats_df, "depth", "n_components", "n_products")):
+    for i, s in enumerate(_group_mean(gen_stats_df, "depth", "n_components", _split(gen_stats_df, "n_products"))):
         fig.add_trace(go.Scatter(
             x=s["x"], y=s["y"], mode="lines+markers", name=s["label"],
             line=dict(color=theme.palette(i), width=2),
@@ -222,7 +275,7 @@ def show(sweep_dir: str = _DEFAULT_SWEEP_DIR) -> None:
             hovertemplate=f"products={s['label']}<br>Depth: %{{x}}<br>Components: %{{y:.1f}}<extra></extra>",
         ), row=1, col=1)
 
-    for i, s in enumerate(_group_mean(gen_stats_df, "workstations_count", "n_configs", "depth")):
+    for i, s in enumerate(_group_mean(gen_stats_df, "workstations_count", "n_configs", _split(gen_stats_df, "depth"))):
         fig.add_trace(go.Scatter(
             x=s["x"], y=s["y"], mode="lines+markers", name=s["label"],
             line=dict(color=theme.palette(i), width=2),
@@ -232,7 +285,7 @@ def show(sweep_dir: str = _DEFAULT_SWEEP_DIR) -> None:
         ), row=1, col=2)
 
     # ── Row 2 — Generation: raw material count | Simulation: makespan ─────────
-    for i, s in enumerate(_group_mean(gen_stats_df, "depth", "n_raw", "n_products")):
+    for i, s in enumerate(_group_mean(gen_stats_df, "depth", "n_raw", _split(gen_stats_df, "n_products"))):
         fig.add_trace(go.Scatter(
             x=s["x"], y=s["y"], mode="lines+markers", name=s["label"],
             line=dict(color=theme.palette(i), width=2),
@@ -241,7 +294,7 @@ def show(sweep_dir: str = _DEFAULT_SWEEP_DIR) -> None:
             hovertemplate=f"products={s['label']}<br>Depth: %{{x}}<br>Raw materials: %{{y:.1f}}<extra></extra>",
         ), row=2, col=1)
 
-    for i, s in enumerate(_group_mean(sim_metrics, "alpha", "Makespan", "depth")):
+    for i, s in enumerate(_group_mean(sim_metrics, "alpha", "Makespan", _split(sim_metrics, "depth"))):
         fig.add_trace(go.Scatter(
             x=s["x"], y=s["y"], mode="lines+markers", name=s["label"],
             line=dict(color=theme.palette(i), width=2),
@@ -251,7 +304,7 @@ def show(sweep_dir: str = _DEFAULT_SWEEP_DIR) -> None:
         ), row=2, col=2)
 
     # ── Row 3 — Total cost vs depth | Setup fraction vs sharing ratio ──────────
-    for i, s in enumerate(_group_mean(sim_metrics, "depth", "TotalCost", "n_products")):
+    for i, s in enumerate(_group_mean(sim_metrics, "depth", "TotalCost", _split(sim_metrics, "n_products"))):
         fig.add_trace(go.Bar(
             x=s["x"], y=s["y"], name=s["label"],
             marker_color=theme.palette(i), marker_line_width=0, opacity=0.85,
@@ -259,7 +312,7 @@ def show(sweep_dir: str = _DEFAULT_SWEEP_DIR) -> None:
             hovertemplate=f"products={s['label']}<br>Depth: %{{x}}<br>Cost: $%{{y:.0f}}<extra></extra>",
         ), row=3, col=1)
 
-    for i, s in enumerate(_group_mean(sim_metrics, "sharing_ratio", "MeanSetupPct", "depth")):
+    for i, s in enumerate(_group_mean(sim_metrics, "sharing_ratio", "MeanSetupPct", _split(sim_metrics, "depth"))):
         fig.add_trace(go.Scatter(
             x=s["x"], y=s["y"], mode="lines+markers", name=s["label"],
             line=dict(color=theme.palette(i), width=2),
@@ -280,7 +333,7 @@ def show(sweep_dir: str = _DEFAULT_SWEEP_DIR) -> None:
             hovertemplate=f"<b>{label}</b><br>Sharing: %{{x}}<br>Share: %{{y:.1f}}%<extra></extra>",
         ), row=4, col=1)
 
-    for i, s in enumerate(_group_mean(sim_metrics, "alpha", "MeanStarvedPct", "depth")):
+    for i, s in enumerate(_group_mean(sim_metrics, "alpha", "MeanStarvedPct", _split(sim_metrics, "depth"))):
         fig.add_trace(go.Scatter(
             x=s["x"], y=s["y"], mode="lines+markers", name=s["label"],
             line=dict(color=theme.palette(i), width=2, dash="dash"),
@@ -309,7 +362,7 @@ def show(sweep_dir: str = _DEFAULT_SWEEP_DIR) -> None:
             hovertemplate=f"<b>{state_label}</b><br>Tick: %{{x}}<br>%{{y:.1f}}% of machines<extra></extra>",
         ), row=5, col=1)
 
-    for i, s in enumerate(_group_mean(sim_metrics, "alpha", "MeanBusyPct", "depth")):
+    for i, s in enumerate(_group_mean(sim_metrics, "alpha", "MeanBusyPct", _split(sim_metrics, "depth"))):
         fig.add_trace(go.Scatter(
             x=s["x"], y=s["y"], mode="lines+markers", name=s["label"],
             line=dict(color=theme.palette(i), width=2.5),

@@ -84,17 +84,131 @@ def _progress_bar(done: int, total: int, current: str) -> html.Div:
     ], style={"padding": "12px 0 4px"})
 
 
+def _build_warnings(n_actual: int, cfg: dict, expanded: dict) -> list:
+    """
+    Return a list of alert Divs for any performance conditions that apply.
+
+    Parameters
+    ----------
+    n_actual : int
+        The number of runs that will actually execute — either n_valid (all
+        combinations) or the user-supplied limit, whichever is smaller.
+    cfg : dict
+        Parsed config.yaml.
+    expanded : dict
+        Sweep parameter grid already expanded to lists (from _expand()).
+
+    Warning conditions
+    ------------------
+    1. BOM depth > 4 in the grid — per-run cost grows steeply with depth
+       because component count ≈ branching^depth.
+    2. n_ticks > 10 000 — state_summary.csv rows = runs × n_ticks; above
+       ~10 K ticks the file can reach hundreds of MB.
+    3. n_orders > 100 — per-run simulation time scales linearly with orders.
+    4. branching_max > 3 AND max swept depth > 3 — combined exponential growth.
+    5. n_actual × n_ticks ≥ 1 000 000 AND n_ticks ≤ 10 000 — wide grid at a
+       moderate tick count still produces millions of state_summary rows.
+    """
+    sim_cfg       = cfg.get("simulation", {})
+    n_ticks       = sim_cfg.get("n_ticks", 0)
+    n_orders      = sim_cfg.get("n_orders", 0)
+    branching_max = max(cfg.get("bom", {}).get("branching", [2, 2]))
+    depth_vals    = expanded.get("depth", [])
+    max_depth     = max(depth_vals) if depth_vals else 0
+    est_rows      = n_actual * n_ticks
+
+    alerts = []
+
+    # 1. BOM depth > 4
+    if any(d > 4 for d in depth_vals):
+        alerts.append(html.Div([
+            html.Strong("Note — BOM depth above 4: "),
+            "The sweep grid includes BOM depth values above 4. Each additional "
+            "depth level multiplies the number of components by the branching "
+            "factor and requires proportionally more simulation ticks, so "
+            "per-run time increases sharply with depth. Runs at higher depth "
+            "values will take considerably longer than earlier ones.",
+        ], className="alert alert-warning", style={"marginTop": "12px"}))
+
+    # 2. High tick count
+    if n_ticks > 10_000:
+        alerts.append(html.Div([
+            html.Strong("Note — high tick count: "),
+            f"n_ticks is set to {n_ticks:,}. The sweep result file "
+            f"state_summary.csv stores one row per run per tick, so this sweep "
+            f"will produce approximately {est_rows:,} rows "
+            f"({n_actual:,} runs × {n_ticks:,} ticks). "
+            "The chart visualiser handles this with a chunked reader, but "
+            "loading and rendering will still be noticeably slower than for "
+            "smaller tick counts. Consider reducing n_ticks in "
+            "Configure → simulation if you do not need the full time horizon "
+            "for every run.",
+        ], className="alert alert-warning", style={"marginTop": "12px"}))
+
+    # 3. High order count
+    if n_orders > 100:
+        alerts.append(html.Div([
+            html.Strong("Note — high order count: "),
+            f"n_orders is set to {n_orders:,}. Per-run simulation time scales "
+            "linearly with the number of orders — each order triggers a full "
+            "BOM explosion and is tracked through the factory until completion. "
+            f"With {n_actual:,} runs, this sweep will process approximately "
+            f"{n_actual * n_orders:,} total orders. Consider reducing n_orders "
+            "in Configure → simulation if shorter runs are acceptable.",
+        ], className="alert alert-warning", style={"marginTop": "12px"}))
+
+    # 4. High branching × depth
+    if branching_max > 3 and max_depth > 3:
+        est_comps = branching_max ** max_depth
+        alerts.append(html.Div([
+            html.Strong("Note — high branching × depth: "),
+            f"The BOM branching factor reaches {branching_max} and the sweep "
+            f"includes depth values up to {max_depth}. Component count grows "
+            f"roughly as branching^depth (≈ {est_comps:,} at the maximum), "
+            "which multiplies workstation assignments, buffer slots, and the "
+            "BOM explosion work per order. Per-run time and memory usage can "
+            "grow steeply as both parameters increase together.",
+        ], className="alert alert-warning", style={"marginTop": "12px"}))
+
+    # 5. Large state_summary not already caught by warning 2
+    if est_rows >= 1_000_000 and n_ticks <= 10_000:
+        alerts.append(html.Div([
+            html.Strong("Note — large state_summary output: "),
+            f"With {n_actual:,} runs and {n_ticks:,} ticks each, "
+            f"state_summary.csv will contain approximately {est_rows:,} rows. "
+            "The chart visualiser uses a chunked reader to avoid running out of "
+            "memory, but loading will be slower than for smaller outputs. "
+            "Use the 'Limit to N runs' field to reduce the grid size if needed.",
+        ], className="alert alert-warning", style={"marginTop": "12px"}))
+
+    return alerts
+
+
 def _build_charts():
     """Build the sweep visualisation figure from disk. Returns a list of Dash children."""
     csv_files = [os.path.join(_SWEEP_DIR, f)
                  for f in ["gen_stats.csv", "state_summary.csv",
                             "utilization.csv", "throughput.csv", "costs.csv"]]
-    if not all(os.path.exists(p) for p in csv_files):
-        return [html.Div("Previous sweep results not found on disk.",
-                         className="alert alert-info")]
-    from analysis.sweep.visualize_sweep import show as sweep_show
-    fig = sweep_show(_SWEEP_DIR)
-    return [dcc.Graph(figure=fig)]
+    missing = [os.path.basename(p) for p in csv_files if not os.path.exists(p)]
+    if missing:
+        return [html.Div(
+            f"Sweep output files not found: {', '.join(missing)}. "
+            "Run the sweep first.",
+            className="alert alert-info",
+        )]
+    try:
+        from analysis.sweep.visualize_sweep import show as sweep_show
+        fig = sweep_show(_SWEEP_DIR)
+        return [dcc.Graph(figure=fig)]
+    except Exception as exc:
+        import traceback
+        return [html.Div([
+            html.Strong("Chart build failed: "),
+            str(exc),
+            html.Pre(traceback.format_exc(),
+                     style={"fontSize": "11px", "marginTop": "8px",
+                            "whiteSpace": "pre-wrap", "color": "#8a8a86"}),
+        ], className="alert alert-error")]
 
 
 # ── Layout ─────────────────────────────────────────────────────────────────────
@@ -104,25 +218,25 @@ def layout():
         cfg = yaml.safe_load(f)
     sweep_cfg = cfg.get("sweep", {})
     expanded  = {k: _expand(v) for k, v in sweep_cfg.items()}
-    n_combos  = len(list(itertools.product(*expanded.values()))) if expanded else 0
+
+    sweep_keys = list(expanded.keys())
+    all_combos = list(itertools.product(*expanded.values())) if expanded else []
+    n_combos   = len(all_combos)
+
+    # Count only valid combinations (depth <= workstations_count).
+    # Invalid ones are silently skipped by the engine, so the user should
+    # see the valid count — that is the actual number of runs that will execute.
+    def _is_valid(combo: tuple) -> bool:
+        params = dict(zip(sweep_keys, combo))
+        depth  = params.get("depth")
+        n_ws   = params.get("workstations_count")
+        return (depth <= n_ws) if (depth is not None and n_ws is not None) else True
+
+    n_valid = sum(1 for c in all_combos if _is_valid(c))
+    n_skipped = n_combos - n_valid
 
     rows = [{"Parameter": k, "Values": str(vals), "Count": len(vals)}
             for k, vals in expanded.items()]
-
-    # Warn when depth > 4 is part of the sweep grid.
-    # Each additional BOM level multiplies the component count (by the branching
-    # factor) and the number of ticks required — per-run time grows steeply.
-    depth_vals = expanded.get("depth", [])
-    depth_warning = None
-    if any(d > 4 for d in depth_vals):
-        depth_warning = html.Div([
-            html.Strong("Note: "),
-            "The sweep grid includes BOM depth values above 4. Each additional "
-            "depth level multiplies the number of components by the branching "
-            "factor and requires proportionally more simulation ticks, so "
-            "per-run time increases sharply with depth. Runs at higher depth "
-            "values will take considerably longer than earlier ones.",
-        ], className="alert alert-warning", style={"marginTop": "12px"})
 
     return html.Div([
         html.Div("analyse · sweep", className="af-eyebrow"),
@@ -132,8 +246,32 @@ def layout():
 
         html.H2("Sweep grid"),
         html.Div([
-            _metric("Total combinations", f"{n_combos:,}"),
-            _metric("Parameters",         len(expanded)),
+            # Custom card: valid count + raw count in red parentheses when some
+            # combinations are skipped (depth > workstations_count).
+            html.Div([
+                html.Div("Total combinations", className="metric-label"),
+                html.Div([
+                    html.Span(f"{n_valid:,}", className="metric-value"),
+                    html.Span([
+                        f"  ({n_combos:,} raw)",
+                        html.Span(
+                            " ⓘ",
+                            title=(
+                                f"{n_skipped:,} combination(s) skipped — "
+                                "depth > workstations_count is always invalid "
+                                "(every BOM stage needs at least one workstation). "
+                                f"Valid runs: {n_valid:,}  |  "
+                                f"Raw grid: {n_combos:,}  |  "
+                                f"Skipped: {n_skipped:,}"
+                            ),
+                            style={"cursor": "help", "fontSize": "12px",
+                                   "color": "#c0392b"},
+                        ),
+                    ], style={"fontSize": "13px", "color": "#c0392b",
+                              "marginLeft": "6px"}) if n_skipped > 0 else html.Span(),
+                ], style={"display": "flex", "alignItems": "baseline"}),
+            ], className="metric-card"),
+            _metric("Parameters", len(expanded)),
         ], className="metric-row"),
 
         dash_table.DataTable(
@@ -146,35 +284,35 @@ def layout():
         ) if rows else html.Div("No sweep parameters defined in config.yaml.",
                                 className="alert alert-info"),
 
-        depth_warning or html.Span(),
+        # Warnings are populated reactively by _warnings_callback so they
+        # update whenever the user changes the "Limit to N runs" field.
+        html.Div(id="sweep-warnings"),
 
         html.Hr(className="divider"),
 
         # ── Max-runs limiter ───────────────────────────────────────────────────
         html.Div([
-            html.Span("Limit to N runs", className="widget-label"),
-            html.Div(
-                dcc.Input(
-                    id="sweep-max-runs",
-                    type="number",
-                    placeholder=f"all  ({n_combos:,})",
-                    min=1,
-                    max=n_combos if n_combos > 0 else None,
-                    step=1,
-                    debounce=False,
-                    style={"width": "100%"},
-                ),
-                style={"maxWidth": "220px"},
+            html.Span("Limit to N runs", className="widget-label",
+                      style={"flexShrink": 0}),
+            dcc.Input(
+                id="sweep-max-runs",
+                type="number",
+                placeholder=f"all  ({n_valid:,})",
+                min=1,
+                max=n_valid if n_valid > 0 else None,
+                step=1,
+                debounce=False,
+                style={"width": "200px", "flexShrink": 0},
             ),
             html.Span(
                 "Leave blank to run every combination. "
                 "When filled, exactly N combinations are picked at random "
                 "(reproducible if a seed is set in Configure → Metadata).",
                 style={"fontSize": "12px", "color": "#8a8a86",
-                       "marginLeft": "12px", "alignSelf": "center"},
+                       "alignSelf": "center"},
             ),
         ], style={"display": "flex", "alignItems": "center",
-                  "gap": "8px", "marginBottom": "16px"}),
+                  "gap": "12px", "marginBottom": "16px"}),
 
         html.Button("Run sweep", id="sweep-btn", n_clicks=0,
                     className="btn btn-primary btn-full"),
@@ -184,7 +322,7 @@ def layout():
         html.Div(id="sweep-progress"),
 
         # Interval fires every 500 ms while a sweep is running; starts disabled.
-        dcc.Interval(id="sweep-poll", interval=500, n_intervals=0, disabled=True),
+        dcc.Interval(id="sweep-poll", interval=2000, n_intervals=0, disabled=True),
 
         # sweep-load-trigger fires once ~100 ms after the page mounts so that
         # layout() returns immediately (no blocking chart work), then the callback
@@ -198,6 +336,35 @@ def layout():
 
 
 # ── Callbacks ─────────────────────────────────────────────────────────────────
+
+@callback(
+    Output("sweep-warnings", "children"),
+    Input("sweep-load-trigger", "n_intervals"),  # fires once on page mount
+    Input("sweep-max-runs",     "value"),        # fires on every limit change
+    prevent_initial_call=False,
+)
+def _warnings_callback(_, max_runs_val):
+    """Recompute performance warnings whenever the run limit changes."""
+    with open(store.CONFIG_PATH) as f:
+        cfg = yaml.safe_load(f)
+
+    sweep_cfg = cfg.get("sweep", {})
+    expanded  = {k: _expand(v) for k, v in sweep_cfg.items()}
+    sweep_keys = list(expanded.keys())
+    all_combos = list(itertools.product(*expanded.values())) if expanded else []
+
+    def _is_valid(combo):
+        params = dict(zip(sweep_keys, combo))
+        depth  = params.get("depth")
+        n_ws   = params.get("workstations_count")
+        return (depth <= n_ws) if (depth is not None and n_ws is not None) else True
+
+    n_valid  = sum(1 for c in all_combos if _is_valid(c))
+    # n_actual reflects the limit the user typed (if any).
+    n_actual = min(int(max_runs_val), n_valid) if max_runs_val else n_valid
+
+    return _build_warnings(n_actual, cfg, expanded)
+
 
 @callback(
     Output("sweep-poll",     "disabled"),
