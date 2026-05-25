@@ -328,6 +328,38 @@ textarea:focus {
 
 .form-group { margin-bottom: 14px; }
 
+/* Inline parameter hint — rendered below an input inside a form-group */
+.field-hint {
+  font-family: var(--af-sans);
+  font-size: 11px;
+  color: var(--af-ink-3);
+  line-height: 1.45;
+  margin-top: 4px;
+  display: block;
+}
+
+/* Hints hidden by default; removed when toggle is active */
+.hints-hidden .field-hint { display: none; }
+
+/* Small toggle button in section header */
+.btn-hint-toggle {
+  font-family: var(--af-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--af-ink-4);
+  background: none;
+  border: 1px solid var(--af-rule);
+  border-radius: 2px;
+  padding: 2px 8px;
+  cursor: pointer;
+  transition: color 0.1s, border-color 0.1s;
+  line-height: 1.6;
+}
+.btn-hint-toggle:hover {
+  color: var(--af-ink);
+  border-color: var(--af-ink-3);
+}
+
 .grid-2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
