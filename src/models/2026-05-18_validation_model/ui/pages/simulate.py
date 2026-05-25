@@ -98,15 +98,57 @@ def _build_figures(results: dict) -> dict:
     )
     theme.apply_axis_style(fig_c)
 
-    # Buffers chart  (most expensive — iterates large DataFrame)
+    # Buffers chart
+    # -------------------------------------------------------------------------
+    # The buffers DataFrame has shape (n_ticks × n_components, 4).  With
+    # n_ticks = 50 000 and 30 components that is 1.5 million rows.
+    #
+    # Slow path (old): filter the full DataFrame once per component, create
+    #   a Scatter (SVG) trace with 50 000 points each → serialize 1.5 M pts
+    #   to JSON → browser renders 30 SVG paths of 50 000 pts each.
+    #
+    # Fast path (new):
+    #   1. Reshape — postprocess builds the DataFrame in tick-major order
+    #      (np.repeat ticks, np.tile components), so one reshape turns it
+    #      into a (n_ticks, n_components) 2-D array; no filtering needed.
+    #   2. Stride-downsample — a monitor is ~1 200 px wide so >1 500 pts/trace
+    #      add no visible detail.  We drop every nth point so each trace has
+    #      at most _BUF_MAX_PTS points.
+    #   3. Scattergl — WebGL-based renderer; handles 100 k+ pts with no lag.
+    #
+    # Combined effect: ~25× fewer data points, ~10× faster WebGL rendering.
+    _BUF_MAX_PTS = 1_500
+
     buf_df = results["buffers"]
     fig_b_dict = None
     if not buf_df.empty:
+        # Step 1: reconstruct the (n_ticks, n_comps) 2-D array via reshape.
+        # comp_names are the unique components in the order postprocess wrote them;
+        # they repeat in the same pattern every tick.
+        stocks_flat = buf_df["Stock"].to_numpy()
+        times_flat  = buf_df["Time"].to_numpy()
+        comp_col    = buf_df["Component"].to_numpy()
+
+        # Number of non-raw components = number of unique entries per tick group.
+        # They appear in the same fixed order for every tick (np.tile pattern).
+        comp_names = list(dict.fromkeys(comp_col))   # first-occurrence order, fast
+        n_c = len(comp_names)
+        n_t = len(stocks_flat) // n_c                # number of ticks logged
+
+        # Reshape to (n_ticks, n_comps) — relies on tick-major ordering from postprocess.
+        stocks_2d = stocks_flat[: n_t * n_c].reshape(n_t, n_c)
+        times_1d  = times_flat[::n_c][:n_t]          # one time value per tick row
+
+        # Step 2: compute stride so each trace has at most _BUF_MAX_PTS points.
+        step = max(1, n_t // _BUF_MAX_PTS)
+        t_ds = times_1d[::step]
+
+        # Step 3: build figure with Scattergl (WebGL) traces.
         fig_b = go.Figure()
-        for i, comp in enumerate(buf_df["Component"].unique()):
-            sub = buf_df[buf_df["Component"] == comp].sort_values("Time")
-            fig_b.add_trace(go.Scatter(
-                x=sub["Time"], y=sub["Stock"], mode="lines",
+        for i, comp in enumerate(comp_names):
+            s_ds = stocks_2d[::step, i]
+            fig_b.add_trace(go.Scattergl(
+                x=t_ds, y=s_ds, mode="lines",
                 name=str(comp), line=dict(color=theme.palette(i), width=1),
                 hovertemplate=f"{comp}<br>Time: %{{x:.2f}} h<br>Stock: %{{y}}<extra></extra>",
             ))
@@ -315,8 +357,14 @@ def layout():
                     className="btn btn-primary btn-full"),
         html.Div(id="sim-status", style={"marginTop": "10px"}),
 
+        # sim-load-trigger fires once ~100 ms after the page mounts.
+        # This keeps layout() instant (no blocking figure work here) while
+        # still populating results immediately after the page frame appears.
+        dcc.Interval(id="sim-load-trigger", interval=100,
+                     n_intervals=0, max_intervals=1),
+
         dcc.Loading(
-            html.Div(id="sim-results", children=_render_results(store.get("sim_result"))),
+            html.Div(id="sim-results"),
             type="circle",
         ),
     ])
@@ -335,7 +383,8 @@ def _toggle_fail(value):
 @callback(
     Output("sim-results", "children"),
     Output("sim-status",  "children"),
-    Input("sim-btn", "n_clicks"),
+    Input("sim-load-trigger", "n_intervals"),   # fires once ~100 ms after page mount
+    Input("sim-btn",          "n_clicks"),
     State("sim-n-orders",    "value"),
     State("sim-n-ticks",     "value"),
     State("sim-tick",        "value"),
@@ -353,10 +402,16 @@ def _toggle_fail(value):
     State("sim-rc-hi",       "value"),
     prevent_initial_call=True,
 )
-def _run_sim(n_clicks,
+def _run_sim(n_intervals, n_clicks,
              n_orders, n_ticks, tick, buf, interarr, log_buf,
              fail_en, beta_lo, beta_hi, lam_lo, lam_hi,
              mttr_lo, mttr_hi, rc_lo, rc_hi):
+
+    # ── Page-load path: just render whatever is already in the store ───────────
+    if dash.ctx.triggered_id == "sim-load-trigger":
+        return _render_results(store.get("sim_result")), dash.no_update
+
+    # ── Button path: validate, run, return results ─────────────────────────────
     gen_result = store.get("gen_result")
     if gen_result is None:
         return dash.no_update, html.Div(

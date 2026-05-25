@@ -13,6 +13,40 @@ classes of rule:
                   produce misleading results (e.g. zero throughput).
                   Printed to stderr; execution continues.
 
+Hard errors
+-----------
+  All range fields valid (min/max present, min <= max, pos where required).
+  bom.n_products >= 1
+  bom.depth >= 1
+  bom.sharing_ratio in [0, 1]
+  workstations.count >= 1
+  workstations.count >= bom.depth  (every BOM level needs a workstation)
+  workstations.stage_balance > 0 when set
+  configurations.producers_per_component[0] >= 1
+  configurations specifies assembly_type or processing_time (not neither)
+  assembly_type in {low, medium, high}
+  configurations.variation in (0, 1) when assembly_type is used
+  simulation.tick_duration > 0
+  simulation.buffer_capacity >= bom.quantity[1]   ← E-NEW-1 (deadlock guard)
+  simulation.buffer_capacity >= 1
+  simulation.order_interarrival >= 1
+  simulation.n_ticks >= 1
+  simulation.n_orders >= 1
+  failures.* ranges valid (when failures.enabled = true)
+
+Soft warnings
+-------------
+  W1  n_ticks too small to release all orders
+  W2  (removed — upgraded to hard error E-NEW-1)
+  W3  total simulation horizon too short for even one order (includes branching)
+  W4  weibull_lambda so small machines fail almost every tick
+  W5  producers_per_component[1] will be silently clamped in small stages
+  W6  BOM explosion very large — quotes recommended n_ticks
+  W7  failures.mttr_max > failures.weibull_lambda_min (availability near zero)
+  W8  buffer_capacity < branching_max x qty_max (heavy blocking expected)
+  W9  setup_time_max > 2x processing_time (changeover dominates)
+  W10 sweep grid contains invalid (depth, workstations_count) combinations
+
 Usage
 -----
 Called automatically before generation and simulation::
@@ -21,6 +55,7 @@ Called automatically before generation and simulation::
     validate_config.validate(cfg)   # cfg = utils.load_config(path)
 """
 
+import math
 import sys
 
 # ── Terminal colour helpers ────────────────────────────────────────────────────
@@ -38,6 +73,61 @@ def _bold(s: str)   -> str: return f"\033[1m{s}\033[0m"  if _TTY else s
 
 class ConfigError(ValueError):
     """Raised when one or more hard config assertions fail."""
+
+
+# ── Module-level constants ─────────────────────────────────────────────────────
+
+# (alpha, beta) coefficients for the assembly_type processing-time formula:
+#   pt_mean = alpha * depth^beta   (hours per unit)
+_PT_COEFFS: dict[str, tuple[float, float]] = {
+    "low":    (0.33, 1.39),
+    "medium": (0.28, 1.45),
+    "high":   (0.12, 1.79),
+}
+
+
+# ── Private helpers ────────────────────────────────────────────────────────────
+
+def _pt_range(assembly_type, variation, pt_explicit, depth) -> tuple:
+    """
+    Return (pt_min_h, pt_max_h) for processing time regardless of which
+    configuration mode is active.
+
+    Returns (None, None) if the parameters are incomplete or invalid.
+    """
+    if assembly_type in _PT_COEFFS and depth is not None:
+        alpha, beta = _PT_COEFFS[assembly_type]
+        pt_mean = alpha * (depth ** beta)
+        var = float(variation) if isinstance(variation, (int, float)) else 0.10
+        return pt_mean * (1.0 - var), pt_mean * (1.0 + var)
+    if pt_explicit[0] is not None and pt_explicit[1] is not None:
+        return float(pt_explicit[0]), float(pt_explicit[1])
+    return None, None
+
+
+def _expand_sweep_param(v) -> list:
+    """
+    Expand a sweep parameter value (scalar / list / {min,max,step} dict)
+    to a flat list of numeric values, mirroring sweep.py's expansion logic.
+    """
+    if v is None:
+        return []
+    if isinstance(v, (int, float)):
+        return [v]
+    if isinstance(v, list):
+        return list(v)
+    if isinstance(v, dict):
+        lo   = v.get("min")
+        hi   = v.get("max")
+        step = v.get("step", 1)
+        if lo is None or hi is None or step <= 0:
+            return []
+        result, val = [], lo
+        while val <= hi + 1e-9:
+            result.append(round(val, 10))
+            val += step
+        return result
+    return []
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
@@ -64,20 +154,21 @@ def validate(cfg: dict) -> None:
     def warn(msg: str) -> None: warnings.append(msg)
 
     # ── Section shortcuts ──────────────────────────────────────────────────────
-    bom  = cfg.get("bom",           {})
-    ws   = cfg.get("workstations",  {})
-    cc   = cfg.get("configurations",{})
-    lay  = cfg.get("layout",        {})
-    sim  = cfg.get("simulation",    {})
-    fail = cfg.get("failures",      {})
+    bom   = cfg.get("bom",            {})
+    ws    = cfg.get("workstations",   {})
+    cc    = cfg.get("configurations", {})
+    lay   = cfg.get("layout",         {})
+    sim   = cfg.get("simulation",     {})
+    fail  = cfg.get("failures",       {})
+    sweep = cfg.get("sweep",          {})
 
     # ── Helper: validate a [min, max] range field ──────────────────────────────
     def _range(path: str, lo, hi, *, pos: bool = False) -> None:
         """
         Check a two-element numeric range [lo, hi].
 
-        pos=True  → lo must be strictly positive (> 0)
-        pos=False → lo must be non-negative (>= 0)
+        pos=True  -> lo must be strictly positive (> 0)
+        pos=False -> lo must be non-negative (>= 0)
         """
         if lo is None:
             err(f"{path}[0] (min) is missing"); return
@@ -159,7 +250,7 @@ def validate(cfg: dict) -> None:
         if not isinstance(variation, (int, float)) or not (0.0 < variation < 1.0):
             err(
                 f"configurations.variation must be a fraction in (0, 1)  "
-                f"(got {variation})  — e.g. 0.10 for ±10%"
+                f"(got {variation})  — e.g. 0.10 for +-10%"
             )
     elif pt[0] is not None or pt[1] is not None:
         # Legacy explicit range still supported.
@@ -170,9 +261,9 @@ def validate(cfg: dict) -> None:
             "or 'processing_time' (explicit [min, max] range)"
         )
 
-    _range("configurations.setup_time",      st[0], st[1])
-    _range("configurations.setup_cost",      sc[0], sc[1])
-    _range("configurations.operating_cost",  oc[0], oc[1])
+    _range("configurations.setup_time",     st[0], st[1])
+    _range("configurations.setup_cost",     sc[0], sc[1])
+    _range("configurations.operating_cost", oc[0], oc[1])
 
     # ── Layout ────────────────────────────────────────────────────────────────
     cap = lay.get("flow_capacity",  [None, None])
@@ -204,6 +295,27 @@ def validate(cfg: dict) -> None:
     if n_orders is None or n_orders < 1:
         err(f"simulation.n_orders must be >= 1  (got {n_orders})")
 
+    # ── E-NEW-1: buffer_capacity must be >= max BOM edge quantity ─────────────
+    # In the unit-rate model every component buffer can hold at most
+    # buffer_capacity units.  A downstream workstation assembling one output
+    # unit consumes bom.quantity[1] units from each input buffer.  If that
+    # required quantity exceeds buffer_capacity, the input buffer can never
+    # accumulate enough stock — the upstream producer fills it and goes BLOCKED
+    # while the downstream stays STARVED.  This is an unrecoverable deadlock
+    # that always produces zero throughput.
+    if None not in (buffer_capacity, quantity[1]):
+        if buffer_capacity < quantity[1]:
+            err(
+                f"simulation.buffer_capacity ({buffer_capacity}) < "
+                f"bom.quantity max ({quantity[1]})  "
+                f"— a downstream workstation needs up to {quantity[1]} units "
+                f"from each input buffer to produce one output unit, but the "
+                f"buffer caps at {buffer_capacity}.  The input buffer can never "
+                f"accumulate enough stock: producer goes BLOCKED, consumer stays "
+                f"STARVED — guaranteed deadlock.  "
+                f"Set buffer_capacity >= bom.quantity[1] (>= {quantity[1]})."
+            )
+
     # ── Failures (only when enabled) ──────────────────────────────────────────
     failures_enabled = fail.get("enabled", False)
     if failures_enabled:
@@ -221,41 +333,48 @@ def validate(cfg: dict) -> None:
     # SOFT WARNINGS (feasibility)
     # =========================================================================
 
-    # W1 — will all orders even be released before the simulation ends?
+    # Derive pt range once — used by several warnings below.
+    pt_min_h, pt_max_h = _pt_range(assembly_type, variation, pt, depth)
+
+    # ── W1 — will all orders be released before the simulation ends? ───────────
     if None not in (n_ticks, n_orders, order_interarrival):
-        ticks_needed = n_orders * order_interarrival
-        if n_ticks < ticks_needed:
+        ticks_to_release_all = n_orders * order_interarrival
+        if n_ticks < ticks_to_release_all:
             warn(
-                f"simulation.n_ticks ({n_ticks}) < n_orders ({n_orders}) x "
-                f"order_interarrival ({order_interarrival}) = {ticks_needed}  "
-                f"— not all orders will be released before the simulation ends"
+                f"simulation.n_ticks ({n_ticks:,}) < n_orders ({n_orders}) x "
+                f"order_interarrival ({order_interarrival}) = {ticks_to_release_all:,}  "
+                f"— not all {n_orders} orders will be released before the "
+                f"simulation ends.  Increase n_ticks to at least "
+                f"{ticks_to_release_all:,} (plus processing time for the last order)."
             )
 
-    # W2 — can a completed batch ever fit in the buffer?
-    if None not in (buffer_capacity, quantity[1]):
-        if buffer_capacity < quantity[1]:
-            warn(
-                f"simulation.buffer_capacity ({buffer_capacity}) < "
-                f"bom.quantity max ({quantity[1]})  "
-                f"— completed batches may never fit in the buffer; "
-                f"workstations will be permanently blocked"
-            )
-
-    # W3 — is total simulation time enough for even one order to complete?
-    if None not in (tick_duration, n_ticks, depth, pt[1], st[1], quantity[1]):
-        min_one_order_h = depth * (st[1] + pt[1] * quantity[1])
+    # ── W3 — is total simulation time enough for even one order? ──────────────
+    # Estimate: at each of 'depth' BOM levels, 'branching_max' different
+    # component types must be produced, each needing 'qty_max' units, each
+    # taking 'pt_max' hours.  This assumes a single workstation per level
+    # (worst case / lower bound on parallelism).
+    if None not in (tick_duration, n_ticks, depth, quantity[1], branching[1], pt_max_h, st[1]):
+        branching_max = branching[1]
+        qty_max       = quantity[1]
+        # Sequential lower bound: depth levels × branching_max types × qty_max
+        # units × pt_max per unit, plus one setup per level.
+        est_one_order_h = depth * (st[1] + branching_max * qty_max * pt_max_h)
         total_sim_h     = n_ticks * tick_duration
-        if total_sim_h < min_one_order_h:
+        if total_sim_h < est_one_order_h:
             warn(
-                f"Total simulation time ({total_sim_h:.1f} h = "
-                f"n_ticks {n_ticks} x tick_duration {tick_duration} h) "
+                f"Total simulation time ({total_sim_h:,.0f} h = "
+                f"n_ticks {n_ticks:,} x tick_duration {tick_duration} h) "
                 f"< estimated minimum for one order to complete "
-                f"({min_one_order_h:.1f} h = depth {depth} x "
-                f"(setup_max {st[1]} h + pt_max {pt[1]} h x qty_max {quantity[1]}))  "
-                f"— zero throughput is almost certain"
+                f"({est_one_order_h:,.0f} h).  "
+                f"Estimate: depth {depth} x (setup_max {st[1]} h + "
+                f"branching_max {branching_max} x qty_max {qty_max} x "
+                f"pt_max {pt_max_h:.2f} h).  "
+                f"With tick_duration {tick_duration} h this requires roughly "
+                f"{math.ceil(est_one_order_h / tick_duration):,} ticks for "
+                f"one order — zero throughput is almost certain."
             )
 
-    # W4 — are machines so fragile they fail almost every tick?
+    # ── W4 — are machines so fragile they fail almost every tick? ─────────────
     if failures_enabled:
         wl_check = fail.get("weibull_lambda", [None, None])
         if None not in (tick_duration, wl_check[0]) and wl_check[0] < tick_duration * 10:
@@ -266,7 +385,7 @@ def validate(cfg: dict) -> None:
                 f"simulation will degenerate into pure repair downtime"
             )
 
-    # W5 — will producers_per_component[1] be silently clamped?
+    # ── W5 — will producers_per_component[1] be silently clamped? ─────────────
     if None not in (n_ws, depth, ppc[1]) and depth >= 1:
         avg_ws_per_stage = n_ws / depth
         if ppc[1] > avg_ws_per_stage:
@@ -274,8 +393,139 @@ def validate(cfg: dict) -> None:
                 f"configurations.producers_per_component max ({ppc[1]}) > "
                 f"average workstations per stage "
                 f"({n_ws} / {depth} = {avg_ws_per_stage:.1f})  "
-                f"— the upper bound will be silently clamped in stages with fewer workstations"
+                f"— the upper bound will be silently clamped in stages with "
+                f"fewer workstations than the requested max"
             )
+
+    # ── W6 — BOM explosion very large: quote recommended n_ticks ──────────────
+    # Compute the geometric sum of total non-raw component units per order.
+    #
+    # For one product, the full BOM explosion produces (worst case):
+    #   sum_{l=1}^{depth} (branching_max * qty_max)^l  units across all levels
+    #
+    # Each unit takes ~pt_max / tick_duration ticks to process.  The resulting
+    # ticks estimate is a sequential upper bound; real run time is shorter due
+    # to parallel workstations and pipeline effects, but the ratio
+    # (estimated / n_ticks) is a reliable indicator of under-sizing.
+    if None not in (depth, branching[1], quantity[1], pt_max_h, tick_duration, n_ticks, n_orders):
+        bq = branching[1] * quantity[1]        # fan-out factor per level
+        if bq == 1:
+            approx_units = depth
+        else:
+            approx_units = int(bq * (bq ** depth - 1) / (bq - 1))
+
+        ticks_per_unit  = math.ceil(pt_max_h / tick_duration)
+        est_one_order   = approx_units * ticks_per_unit   # sequential upper bound
+        est_all_orders  = est_one_order * n_orders
+        threshold_units = 1_000
+
+        if approx_units > threshold_units and est_all_orders > n_ticks:
+            warn(
+                f"BOM explosion is large: ~{approx_units:,} component units "
+                f"per order "
+                f"(depth={depth}, branching_max={branching[1]}, qty_max={quantity[1]})."
+                f"  At pt_max {pt_max_h:.2f} h/unit with tick_duration "
+                f"{tick_duration} h, one order needs up to "
+                f"~{est_one_order:,} ticks (sequential upper bound; "
+                f"parallel workstations reduce this significantly).  "
+                f"For {n_orders} orders: ~{est_all_orders:,} ticks.  "
+                f"Current n_ticks={n_ticks:,} — consider increasing it."
+            )
+
+    # ── W7 — repair time exceeds machine lifetime (failures) ──────────────────
+    # If mttr_max > weibull_lambda_min, there exist workstations whose expected
+    # repair duration is longer than their characteristic life.  Steady-state
+    # availability for those machines is A = MTTF / (MTTF + MTTR) << 0.5,
+    # potentially approaching zero.
+    if failures_enabled:
+        wl_check   = fail.get("weibull_lambda", [None, None])
+        mttr_check = fail.get("mttr",           [None, None])
+        if None not in (wl_check[0], mttr_check[1]):
+            if mttr_check[1] > wl_check[0]:
+                warn(
+                    f"failures.mttr max ({mttr_check[1]} h) > "
+                    f"failures.weibull_lambda min ({wl_check[0]} h)  "
+                    f"— for the shortest-lived machines, the worst-case repair "
+                    f"duration exceeds the characteristic life.  "
+                    f"Steady-state availability A = MTTF / (MTTF + MTTR) may "
+                    f"be very low (< 0.5) for some workstations.  "
+                    f"Consider mttr[1] <= weibull_lambda[0] ({wl_check[0]} h)."
+                )
+
+    # ── W8 — buffer too small relative to BOM fan-in (heavy blocking) ─────────
+    # A downstream workstation assembling one output unit simultaneously consumes
+    # qty_max units from each of branching_max input buffers.  Buffers for the
+    # different input types fill up while sibling types are still being produced.
+    # If buffer_capacity < branching_max * qty_max, those buffers will routinely
+    # saturate and cause cascading BLOCKED states — even though it is not an
+    # unrecoverable deadlock (covered by E-NEW-1).
+    if None not in (buffer_capacity, branching[1], quantity[1]):
+        fan_in = branching[1] * quantity[1]
+        if buffer_capacity < fan_in:
+            warn(
+                f"simulation.buffer_capacity ({buffer_capacity}) < "
+                f"bom.branching_max x bom.quantity_max "
+                f"({branching[1]} x {quantity[1]} = {fan_in})  "
+                f"— a downstream workstation assembling one unit needs up to "
+                f"{quantity[1]} units of each of {branching[1]} input types "
+                f"({fan_in} slots total across those buffers).  "
+                f"Buffers for one input type will fill while sibling types are "
+                f"still being produced, causing heavy BLOCKED time.  "
+                f"Consider buffer_capacity >= {fan_in}."
+            )
+
+    # ── W9 — setup time dominates processing time ─────────────────────────────
+    # When setup_time_max > 2 x pt_max, changeover overhead dominates the
+    # machine's time budget.  This produces high setup costs, low processing
+    # utilisation, and makes the scheduler's changeover-avoidance heuristic
+    # highly consequential — a single wrong assignment can waste many hours.
+    if None not in (st[1], pt_max_h) and pt_max_h > 0:
+        if st[1] > 2 * pt_max_h:
+            what = (
+                f"assembly_type='{assembly_type}' at depth={depth} "
+                f"-> pt_max ~{pt_max_h:.2f} h"
+                if assembly_type else
+                f"configurations.processing_time max = {pt[1]} h"
+            )
+            warn(
+                f"configurations.setup_time max ({st[1]} h) > "
+                f"2 x processing_time max ({pt_max_h:.2f} h)  "
+                f"[{what}]  "
+                f"— changeover overhead dominates the machine's time budget.  "
+                f"Expect low processing utilisation and high sensitivity to "
+                f"scheduling order.  Consider reducing setup_time or "
+                f"increasing producers_per_component to reduce changeovers."
+            )
+
+    # ── W10 — sweep grid contains invalid (depth, workstations_count) pairs ───
+    # Some combinations of swept depth and workstations_count values violate the
+    # hard constraint depth <= workstations_count.  Those runs will raise a
+    # ConfigError mid-sweep, aborting it partway through and producing
+    # incomplete output files.
+    if sweep:
+        sweep_depths = _expand_sweep_param(sweep.get("depth"))
+        sweep_wc     = _expand_sweep_param(sweep.get("workstations_count"))
+        if sweep_depths and sweep_wc:
+            invalid = [
+                (int(d), int(wc))
+                for d  in sweep_depths
+                for wc in sweep_wc
+                if wc < d
+            ]
+            if invalid:
+                n_total   = len(sweep_depths) * len(sweep_wc)
+                n_invalid = len(invalid)
+                worst     = max(invalid, key=lambda p: p[0] - p[1])
+                warn(
+                    f"sweep grid contains {n_invalid} of {n_total} "
+                    f"(depth, workstations_count) combinations where "
+                    f"depth > workstations_count "
+                    f"(e.g. depth={worst[0]}, workstations_count={worst[1]}).  "
+                    f"These runs will raise a ConfigError at runtime, leaving "
+                    f"the sweep output incomplete.  "
+                    f"Ensure sweep.depth.max <= sweep.workstations_count.min, "
+                    f"or tighten the ranges to exclude invalid combinations."
+                )
 
     # =========================================================================
     # REPORT
@@ -292,4 +542,4 @@ def validate(cfg: dict) -> None:
         )
 
     if not warnings:
-        print("  [validate_config] OK — all checks passed.")
+        print("  [validate_config] OK -- all checks passed.")

@@ -53,7 +53,22 @@ def _expand(val) -> list:
         return [val]
 
 # ── Run sweep ──────────────────────────────────────────────────────────────────
-def main():
+def main(progress_callback=None):
+    """
+    Run the full parameter sweep.
+
+    Parameters
+    ----------
+    progress_callback : callable | None
+        Optional function called after every completed run (and once before the
+        loop to report the total).  Signature::
+
+            progress_callback(done: int, total: int, current: str) -> None
+
+        ``done``    — number of runs completed so far (0 = before first run)
+        ``total``   — total number of valid (depth <= ws_count) combinations
+        ``current`` — human-readable label of the combination just finished
+    """
     cfg = utils.load_config()
 
     # ── Sweep parameter grid (from config.yaml → sweep:) ──────────────────────
@@ -122,6 +137,10 @@ def main():
     print(f"Starting sweep: {total_runs} combinations × {sim_params['n_orders']} orders each")
     print(f"Sweep parameters: {', '.join(sweep_keys)}\n")
 
+    # Report total before the loop so the UI can show 0 / N immediately.
+    if progress_callback:
+        progress_callback(0, total_runs, "")
+
     all_gen_stats:    list[dict]          = []
     all_state_summary: list[pd.DataFrame] = []
     all_utilization:  list[pd.DataFrame] = []
@@ -167,6 +186,9 @@ def main():
             )
         except Exception as e:
             print(f"  [SKIP] Run {run_id}/{total_runs} failed: {e}")
+            if progress_callback:
+                combo_str = ", ".join(f"{k}={v}" for k, v in sweep_params.items())
+                progress_callback(run_id, total_runs, combo_str)
             continue
 
         # Compute per-tick state % (averaged across workstations) for the
@@ -209,6 +231,10 @@ def main():
 
         if run_id % 20 == 0 or run_id == total_runs:
             print(f"  Progress: {run_id}/{total_runs} runs complete")
+
+        if progress_callback:
+            combo_str = ", ".join(f"{k}={v}" for k, v in sweep_params.items())
+            progress_callback(run_id, total_runs, combo_str)
 
     # ── Write combined CSVs ────────────────────────────────────────────────────
     os.makedirs(sweep_dir, exist_ok=True)

@@ -30,6 +30,9 @@ _store: dict = {
     "sim_figures":     None,  # cached Plotly figure dicts (avoids rebuilding on page revisit)
     "sim_params":      None,  # last-used simulate() parameters (restored on page revisit)
     "sweep_done":      False,
+    # Progress reported by the background sweep thread.
+    # Keys: running (bool), done (int), total (int), current (str), error (str|None)
+    "sweep_progress":  {"running": False, "done": 0, "total": 0, "current": "", "error": None},
     "validate_done":   False,
     "validate_passed": None,
     "avail_done":      False,

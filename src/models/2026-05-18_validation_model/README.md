@@ -18,6 +18,16 @@ The sidebar groups pages into **Engine** (Generate, Simulate) and **Analyse** (S
 
 ## Contents
 
+- [Configuration Reference](#configuration-reference)
+  - [metadata](#metadata)
+  - [bom](#bom)
+  - [workstations](#workstations)
+  - [configurations](#configurations)
+  - [layout](#layout)
+  - [simulation](#simulation)
+  - [failures](#failures)
+  - [sweep](#sweep)
+  - [output](#output)
 - [Generate](#generate)
   - [Step 1 — BOM tree construction](#step-1--bom-tree-construction)
   - [Step 2 — Ownership renaming](#step-2--ownership-renaming)
@@ -56,6 +66,142 @@ The sidebar groups pages into **Engine** (Generate, Simulate) and **Analyse** (S
   - [Fixed, deterministic order interarrival](#fixed-deterministic-order-interarrival)
   - [No preemption](#no-preemption)
   - [No quality control or scrap](#no-quality-control-or-scrap)
+
+---
+
+## Configuration Reference
+
+All model behaviour is controlled by a single file: **`config.yaml`** in the model root directory. The file is divided into seven sections. Parameters marked *[min, max]* are sampled uniformly from the given range once per generation run.
+
+---
+
+### `metadata`
+
+| Parameter | Type | Description |
+|---|---|---|
+| `name` | string | Human-readable label for this factory configuration. Used only in log output. |
+| `seed` | int or `null` | Random seed passed to every stochastic step (BOM construction, workstation assignment, simulation, failure sampling). Set to `null` for a non-reproducible run. The same seed in `config.yaml` is forwarded to all sub-modules; it can also be overridden per API call. |
+
+---
+
+### `bom`
+
+Controls the shape of the Bill of Materials tree. All intermediate components and raw materials are generated automatically from these five parameters.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `n_products` | int | Number of distinct finished products to generate. Each product is the root of its own BOM subtree; subtrees can share intermediate components when `sharing_ratio > 0`. |
+| `depth` | int ≥ 2 | Number of BOM levels. `depth = 2` means raw material → product (one intermediate level); `depth = 5` means four intermediate levels between raw material and product. Also determines the number of stages workstations are divided into — must not exceed `workstations.count`. Level numbering follows ERP convention: level 0 = raw materials, level `depth` = finished products. |
+| `branching` | [min, max] int | Number of distinct component types that each parent node directly requires. Sampled independently per parent node. A wider range produces more irregular, realistic trees. Example: `[2, 3]` means each assembly requires 2 or 3 direct input types. |
+| `quantity` | [min, max] int | Number of units of each input required to produce one unit of the parent (BOM edge quantity). Sampled independently per BOM edge. Higher values increase the total production volume required to fulfil an order and therefore directly affect simulation duration and recommended `n_ticks`. |
+| `sharing_ratio` | float 0–1 | Probability that, when a new child component is needed, an already-existing component at the same BOM level is reused instead of creating a new one. `0.0` = every component is unique (pure tree); `1.0` = reuse as aggressively as possible given traversal order. Reusing a component adds a second parent to it, turning the BOM tree into a DAG and creating components that are inputs to multiple assemblies. Has no effect if a level contains only one component. |
+
+---
+
+### `workstations`
+
+| Parameter | Type | Description |
+|---|---|---|
+| `count` | int | Total number of assembly workstations. Inventory (`:Inv`) and Quality Inspection (`:QI`) nodes are always added automatically and are not counted here. Must be ≥ `bom.depth` (each stage must have at least one workstation). |
+| `stage_balance` | float > 0 or `null` | Controls how evenly workstations are distributed across the `depth` stages (one stage per BOM level). `null` (default) gives a perfectly uniform, floor-based split. A positive value is the concentration parameter *c* of a symmetric Dirichlet distribution over stage sizes: higher values → more uniform; lower values → more skewed, with one or a few stages absorbing most of the capacity. Rule of thumb: `> 5` looks roughly uniform, `≈ 1` is a uniformly random partition, `< 0.5` creates pronounced bottleneck stages. |
+
+The **alpha (α)** metric is derived from these two parameters and is used throughout the analysis:
+
+```
+α = bom.depth / workstations.count
+```
+
+`α = 1` means one workstation per stage on average (serial, specialised factory). `α → 0` means many workstations per stage (wide, parallel factory with redundant capacity at each level).
+
+---
+
+### `configurations`
+
+A configuration links one workstation to one component it is capable of producing and specifies the time and cost parameters for that pairing. Each workstation can hold multiple configurations (capability for multiple components, switching between them via changeovers).
+
+| Parameter | Type | Description |
+|---|---|---|
+| `producers_per_component` | [min, max] int | How many workstations in a stage are assigned the capability to produce each component. Sampled per component; automatically clamped to the number of workstations in that stage. A range of `[1, 1]` creates a single-machine bottleneck for every component; `[2, 3]` adds redundant capacity. |
+| `processing_time` | [min, max] float (hours) | Processing time per unit for each workstation–component pair. Used only when `assembly_type` is **not** set. Each pair is sampled independently from this range. |
+| `assembly_type` | `"low"`, `"medium"`, or `"high"` | When set, overrides `processing_time` with a formula that scales with BOM depth: `pt = α · depth^β ± variation`. This ensures deeper, more complex assemblies take proportionally longer to produce. The (α, β) coefficients are: `low` = (0.33, 1.39), `medium` = (0.28, 1.45), `high` = (0.12, 1.79). Cannot be used together with an explicit `processing_time` range. |
+| `variation` | float 0–1 | Fractional spread applied around the `assembly_type` formula value to preserve workstation heterogeneity. A value of `0.10` means each pair is sampled uniformly from `[pt_mean × 0.90, pt_mean × 1.10]`. Default: `0.10`. Has no effect when using the explicit `processing_time` range. |
+| `setup_time` | [min, max] float (hours) | Changeover time charged once each time a workstation switches from producing one component to a different one. Sampled per workstation–component pair. A workstation reassigned to the same component it last produced does not incur setup time. |
+| `setup_cost` | [min, max] float | Cost charged per changeover event. Sampled per pair. Contributes to the `SetupCost` column of `costs.csv`. |
+| `operating_cost` | [min, max] float | Cost charged per unit produced. Sampled per workstation–component pair. Contributes to the `OperatingCost` column of `costs.csv`. |
+
+---
+
+### `layout`
+
+The layout graph (which workstations are physically connected) is derived automatically from the BOM and stage assignments — no manual edge definitions are needed. These two parameters control the properties assigned to each derived edge.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `flow_capacity` | [min, max] int | Maximum throughput of each material flow edge (units per unit time). Sampled per edge. Not enforced as a hard constraint in the current simulator; stored in `layout.csv` for reference and potential use in future analyses. |
+| `transport_cost` | [min, max] float | Cost per unit transported along each material flow edge. Sampled per edge. The simulator attributes transport cost to the receiving workstation by averaging all incoming edge costs. Contributes to the `TransportCost` column of `costs.csv`. |
+
+---
+
+### `simulation`
+
+Discrete-Time Simulation (DTS) parameters. Time advances in fixed steps called *ticks*; all workstations are evaluated simultaneously every tick.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `tick_duration` | float (hours) | Duration of one simulated tick in hours. Smaller values give finer time resolution and more accurate timing of job completions, but increase the number of ticks needed to cover the same simulation horizon. Default: `0.05` h (≈ 3 minutes). All processing and setup times are converted to tick counts by ceiling-dividing by this value. |
+| `buffer_capacity` | int | Maximum number of units any single non-raw intermediate component buffer may hold. When a workstation finishes a unit but the buffer is at capacity, it enters the **blocked** state and retries every tick until space opens. Raw material buffers are infinite. A larger value reduces blocking at the cost of higher in-process inventory; a value that is too small relative to BOM explosion quantities can cause deadlock (all producers blocked, all consumers starved). |
+| `order_interarrival` | int (ticks) | Number of ticks between successive order releases. One order is released every `order_interarrival` ticks until `n_orders` have been released. Larger values space orders out and allow the factory to drain partially before new demand arrives, reducing congestion. `order_interarrival × tick_duration` gives the inter-arrival time in simulated hours. |
+| `n_ticks` | int | Hard upper limit on simulation length in ticks. The simulation ends early if all orders are fulfilled before `n_ticks` is reached. Total simulated horizon = `n_ticks × tick_duration` hours. For factories with a deep BOM (high `depth`) and large explosion quantities, this value may need to be set very high (100 000 +) for all orders to complete. A rough lower bound is `n_orders × (branching_max^depth × processing_time_max) / tick_duration`. |
+| `n_orders` | int | Total number of production orders to release. Orders cycle evenly through all `n_products` products. Increasing this value extends the simulation and provides more throughput and utilisation data. |
+
+---
+
+### `failures`
+
+Controls stochastic machine failures. When `enabled: false`, all parameters in this section are ignored and the simulation runs as if machines never break down.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `enabled` | bool | Master switch. `true` activates the Weibull failure model; `false` disables all failures entirely. |
+| `weibull_beta` | [min, max] float | Weibull shape parameter β, sampled once per workstation from this range. Determines the failure-rate trend over machine lifetime: `β < 1` = infant mortality (failure rate decreases over time), `β = 1` = constant failure rate (exponential distribution, memoryless), `β > 1` = wear-out behaviour (failure rate increases with age — the most realistic for mechanical equipment). |
+| `weibull_lambda` | [min, max] float (hours) | Weibull scale parameter λ (characteristic life in simulated hours), sampled once per workstation. Larger values mean the machine lives longer before its first failure on average. The mean time to failure (MTTF) in hours is `λ · Γ(1 + 1/β)`. |
+| `mttr` | [min, max] float (hours) | Repair duration per failure event (Mean Time To Repair). A fresh value is sampled uniformly from this range each time a failure occurs. Repair counts down tick by tick; the machine returns to idle when the counter reaches zero, with age reset to 0 and a new TTF drawn. |
+| `repair_cost` | [min, max] float | Cost charged per failure event. A fresh value is sampled uniformly from this range each time a failure occurs, independently of repair duration. Accumulated in the `RepairCost` column of `costs.csv`. |
+
+**Note on age accumulation:** machine age advances only during `setup` and `processing` states. A workstation that is idle, starved, or blocked does not age. This means MTTF is measured in *active working hours*, not calendar time.
+
+---
+
+### `sweep`
+
+Defines the parameter grid for the Sweep analysis. Every combination of all expanded parameter lists is run as a separate Generate + Simulate pair. Simulation settings (`n_orders`, `tick_duration`, etc.) are taken from `simulation:` and held constant across all runs; only the structural parameters listed here are varied.
+
+**Value formats** — three formats are supported for each parameter:
+
+| Format | Example | Expands to |
+|---|---|---|
+| Scalar (fixed) | `n_products: 4` | `[4]` |
+| List (explicit) | `depth: [2, 3, 5]` | `[2, 3, 5]` |
+| Range | `depth: {min: 1, max: 8, step: 1}` | `[1, 2, 3, 4, 5, 6, 7, 8]` |
+
+**Sweepable parameters:**
+
+| Key | Maps to |
+|---|---|
+| `n_products` | `bom.n_products` |
+| `depth` | `bom.depth` |
+| `workstations_count` | `workstations.count` |
+| `sharing_ratio` | `bom.sharing_ratio` |
+
+The total number of runs equals the product of all expanded list lengths. Runs are executed sequentially; results are collected into aggregated CSVs (see the **Sweep** section below).
+
+---
+
+### `output`
+
+| Parameter | Type | Description |
+|---|---|---|
+| `directory` | string | Directory for Generate output files (`components.csv`, `bom.csv`, etc.). Relative paths are resolved relative to the model root; absolute paths are used as-is. Default: `"gen_output"`. |
 
 ---
 
