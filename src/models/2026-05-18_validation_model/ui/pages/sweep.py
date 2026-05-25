@@ -149,6 +149,33 @@ def layout():
         depth_warning or html.Span(),
 
         html.Hr(className="divider"),
+
+        # ── Max-runs limiter ───────────────────────────────────────────────────
+        html.Div([
+            html.Span("Limit to N runs", className="widget-label"),
+            html.Div(
+                dcc.Input(
+                    id="sweep-max-runs",
+                    type="number",
+                    placeholder=f"all  ({n_combos:,})",
+                    min=1,
+                    max=n_combos if n_combos > 0 else None,
+                    step=1,
+                    debounce=False,
+                    style={"width": "100%"},
+                ),
+                style={"maxWidth": "220px"},
+            ),
+            html.Span(
+                "Leave blank to run every combination. "
+                "When filled, exactly N combinations are picked at random "
+                "(reproducible if a seed is set in Configure → Metadata).",
+                style={"fontSize": "12px", "color": "#8a8a86",
+                       "marginLeft": "12px", "alignSelf": "center"},
+            ),
+        ], style={"display": "flex", "alignItems": "center",
+                  "gap": "8px", "marginBottom": "16px"}),
+
         html.Button("Run sweep", id="sweep-btn", n_clicks=0,
                     className="btn btn-primary btn-full"),
         html.Div(id="sweep-status", style={"marginTop": "10px"}),
@@ -180,9 +207,10 @@ def layout():
     Input("sweep-load-trigger", "n_intervals"),  # fires once on page mount
     Input("sweep-btn",          "n_clicks"),
     Input("sweep-poll",         "n_intervals"),
+    State("sweep-max-runs",     "value"),
     prevent_initial_call=True,
 )
-def _sweep_callback(n_load, n_clicks, n_intervals):
+def _sweep_callback(n_load, n_clicks, n_intervals, max_runs_val):
     triggered = dash.ctx.triggered_id
 
     # ── Page-load path: populate results from store if a sweep was already run ──
@@ -206,6 +234,9 @@ def _sweep_callback(n_load, n_clicks, n_intervals):
                 dash.no_update,
             )
 
+        # Parse the optional limit; None means "run all combinations".
+        max_runs = int(max_runs_val) if max_runs_val else None
+
         store.set("sweep_progress", {
             "running": True, "done": 0, "total": 0,
             "current": "Preparing…", "error": None,
@@ -220,7 +251,7 @@ def _sweep_callback(n_load, n_clicks, n_intervals):
 
             try:
                 from analysis.sweep.sweep import main as run_sweep
-                run_sweep(progress_callback=_on_progress)
+                run_sweep(progress_callback=_on_progress, max_runs=max_runs)
                 prog = store.get("sweep_progress") or {}
                 store.set("sweep_progress", {
                     "running": False,

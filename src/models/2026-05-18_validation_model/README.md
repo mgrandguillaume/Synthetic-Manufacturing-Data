@@ -194,7 +194,7 @@ Defines the parameter grid for the Sweep analysis. Every combination of all expa
 | `workstations_count` | `workstations.count` |
 | `sharing_ratio` | `bom.sharing_ratio` |
 
-The total number of runs equals the product of all expanded list lengths. Runs are executed sequentially; results are collected into aggregated CSVs (see the **Sweep** section below).
+The total number of runs equals the product of all expanded list lengths, minus any combinations where `depth > workstations_count` (which are always skipped). Runs are executed sequentially; results are collected into aggregated CSVs (see the **Sweep** section below).
 
 ---
 
@@ -696,8 +696,17 @@ The sweep runs Generate and Simulate for every combination of parameters defined
 
 ```python
 from analysis.sweep.sweep import main as run_sweep
-run_sweep()
+run_sweep()                  # run every valid combination
+run_sweep(max_runs=50)       # randomly sample 50 combinations
 ```
+
+**Limiting the number of runs**
+
+Large sweep grids can produce hundreds or thousands of combinations. The **Limit to N runs** field in the UI (and the `max_runs` parameter in `main()`) lets you pick exactly *N* combinations at random from the full valid grid instead of running all of them. When `N ≥ total_valid_combinations`, all combinations are run and the setting has no effect.
+
+The random sample is reproducible: if `metadata.seed` is set in `config.yaml`, the same seed is used for sampling, so the same *N* runs are selected every time the sweep is triggered with that configuration. When `metadata.seed` is `null`, a fresh random sample is drawn each time.
+
+The UI field accepts any integer between 1 and the total combination count. Leave it blank to run all combinations.
 
 ### Parameter groups
 
@@ -765,11 +774,11 @@ The validation suite checks that the simulation behaves correctly by running a s
 Run from the **Validate** page in the UI, or call it directly:
 
 ```python
-from analysis.validate.validate import run_all
-passed = run_all(show_charts=False, report_dir="analysis/validate/validation_output")
+from analysis.model_validation.validate import run_all
+passed = run_all(show_charts=False, report_dir="analysis/model_validation/validation_output")
 ```
 
-Results are written to `analysis/validate/validation_output/validation_report.txt` and displayed in the UI. Chart data is saved as CSVs in the same folder.
+Results are written to `analysis/model_validation/validation_output/validation_report.txt` and displayed in the UI. Chart data is saved as CSVs in the same folder.
 
 ### Check groups
 
@@ -815,16 +824,18 @@ These checks compare simulation output against predictions from queueing theory 
 
 ### Output files
 
+All validation output is written to `analysis/model_validation/validation_output/`.
+
 | File | Contents |
 |---|---|
-| `validation_output/validation_report.txt` | Full PASS/FAIL report with per-check messages and timing |
-| `validation_output/val_orders.csv` | Cumulative orders completed over time (used by chart 1) |
-| `validation_output/val_buffers.csv` | Buffer stock per component over time (used by chart 2) |
-| `validation_output/val_availability.csv` | Observed and theoretical availability per workstation (used by chart 3) |
+| `validation_report.txt` | Full PASS/FAIL report with per-check messages and timing |
+| `val_orders.csv` | Cumulative orders completed over time (used by chart 1) |
+| `val_buffers.csv` | Buffer stock per component over time (used by chart 2) |
+| `val_availability.csv` | Observed and theoretical availability per workstation (used by chart 3) |
 
 ### Visualize
 
-Diagnostic charts are shown automatically on the **Validate** page in the UI after a run completes. The underlying script `analysis/validate/visualize_validation.py` can also be run standalone against existing CSVs. Three diagnostic charts are shown in a single figure:
+Diagnostic charts are shown automatically on the **Validate** page in the UI after a run completes. The underlying script `analysis/model_validation/visualize_validation.py` can also be run standalone against existing CSVs. Three diagnostic charts are shown in a single figure:
 
 1. **Cumulative orders completed over time** — a step chart. A smooth staircase confirms the scheduler is making continuous progress. A prolonged flat section indicates deadlock or persistent starvation.
 2. **Buffer levels over time** — stock of each non-raw component over the simulation, with a reference line at `buffer_capacity`. A line that reaches the cap and stays there signals a persistent blocking cascade upstream.

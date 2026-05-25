@@ -11,6 +11,7 @@
 # Dependencies: pip install pyyaml pandas
 
 import os
+import random as _random
 import sys
 import itertools
 
@@ -53,7 +54,7 @@ def _expand(val) -> list:
         return [val]
 
 # ── Run sweep ──────────────────────────────────────────────────────────────────
-def main(progress_callback=None):
+def main(progress_callback=None, max_runs: int | None = None):
     """
     Run the full parameter sweep.
 
@@ -66,8 +67,13 @@ def main(progress_callback=None):
             progress_callback(done: int, total: int, current: str) -> None
 
         ``done``    — number of runs completed so far (0 = before first run)
-        ``total``   — total number of valid (depth <= ws_count) combinations
+        ``total``   — total number of runs that will actually be executed
         ``current`` — human-readable label of the combination just finished
+    max_runs : int | None
+        When given, randomly sample exactly ``min(max_runs, n_valid)``
+        combinations from the full valid grid instead of running all of them.
+        The config seed (metadata.seed) is used for reproducibility; when the
+        seed is None a fresh random sample is drawn each time.
     """
     cfg = utils.load_config()
 
@@ -132,6 +138,18 @@ def main(progress_callback=None):
         return True
 
     combinations = [c for c in all_combos if _valid(c)]
+    n_valid      = len(combinations)
+
+    # ── Optional sub-sampling ──────────────────────────────────────────────────
+    if max_runs is not None and 0 < max_runs < n_valid:
+        seed_val = cfg["metadata"].get("seed")
+        rng      = _random.Random(seed_val)
+        combinations = rng.sample(combinations, max_runs)
+        print(
+            f"  Sampling {max_runs} of {n_valid} valid combinations "
+            f"(seed={seed_val!r})"
+        )
+
     total_runs   = len(combinations)
 
     print(f"Starting sweep: {total_runs} combinations × {sim_params['n_orders']} orders each")

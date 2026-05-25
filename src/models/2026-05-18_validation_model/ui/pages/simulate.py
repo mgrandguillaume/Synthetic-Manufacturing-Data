@@ -13,8 +13,11 @@ dash.register_page(__name__, path="/simulate", title="Simulate")
 def _label(text): return html.Span(text, className="widget-label")
 
 def _num(id_, value, step=1, min_val=None, fmt=None):
+    # debounce=False: these inputs are read as States so debounce must be off —
+    # otherwise State may capture the server-side (pre-debounce) value when the
+    # button is clicked, causing stale reads.
     kw = dict(id=id_, type="number", value=value, step=step,
-              debounce=True, style={"width": "100%"})
+              debounce=False, style={"width": "100%"})
     if min_val is not None: kw["min"] = min_val
     return dcc.Input(**kw)
 
@@ -301,7 +304,7 @@ def layout():
                       _num("sim-n-ticks",  _v("n_ticks",     int(sim.get("n_ticks",3000))),  step=100, min_val=100)],
                      className="form-group"),
             html.Div([_label("Tick duration (h)"),
-                      _num("sim-tick",     _v("tick",        float(sim.get("tick_duration",0.05))), step=0.01, min_val=0.001)],
+                      _num("sim-tick",     _v("tick",        float(sim.get("tick_duration",0.05))), step=0.01, min_val=0.0)],
                      className="form-group"),
             html.Div([_label("Buffer capacity"),
                       _num("sim-buf",      _v("buf",         int(sim.get("buffer_capacity",20))),   min_val=1)],
