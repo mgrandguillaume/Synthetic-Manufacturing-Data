@@ -243,6 +243,14 @@ Row matrix (`bom_ptr`, `bom_inputs`, `bom_qtys`).  For a given output component
 `bom_inputs[bom_ptr[ci] : bom_ptr[ci+1]]`.  This allows the Numba loop to check
 input availability with a tight inner loop and zero Python overhead.
 
+During CSR construction, duplicate `(parent, child)` edges — which can arise
+when `sharing_ratio > 0` if the generator picks the same component twice for
+the same parent — are **aggregated by summing their quantities** into a single
+edge.  Without this, `_inputs_ok` would check each edge independently (passing
+if `stock ≥ qty` per edge) while Phase 4 would decrement stock for every edge,
+consuming more than was actually available and causing buffer stock to go
+negative.
+
 **BOM explosion** — for each product, the full set of component demands generated
 by one order is pre-computed (`expl_comps`, `expl_qtys`, `expl_n`).  When an
 order is released in the tick loop, the loop simply reads from this table rather

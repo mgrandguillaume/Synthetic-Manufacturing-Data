@@ -39,6 +39,14 @@ Contains `build_factory(...)`, the core function that constructs the factory ste
 
 A recursive tree is grown from each product downward.  At each level, nodes are either freshly created or reused from a shared pool (controlled by `sharing_ratio`).  Raw materials sit at level 0 (infinite supply); the finished product sits at the deepest level (`depth`).
 
+Each child selected for a given parent is tracked in an `already_chosen` set.
+The sharing pool is filtered to exclude already-chosen components before each
+pick, so every direct input to a parent is a **distinct component**.  This
+guarantees the effective branching factor always matches the configured range —
+picking the same component twice for the same parent would silently reduce
+branching and produce duplicate BOM edges, which causes buffer stock to go
+negative in the simulator.
+
 ```
 PROD_1  (level 2)
  ├─ COMP_L1_1  (level 1)

@@ -3,7 +3,7 @@ metadata:
   seed: 43
 bom:
   n_products: 5
-  depth: 10
+  depth: 5
   branching:
   - 2
   - 3
@@ -40,7 +40,7 @@ simulation:
   tick_duration: 0.05
   buffer_capacity: 10
   order_interarrival: 10
-  n_ticks: 3000
+  n_ticks: 100000
   n_orders: 10
 failures:
   enabled: true

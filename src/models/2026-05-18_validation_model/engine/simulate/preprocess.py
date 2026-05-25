@@ -105,15 +105,26 @@ def preprocess(
     )
 
     # ── BOM in CSR format ──────────────────────────────────────────────────────
-    bom_adj: dict[int, list[tuple[int, int]]] = defaultdict(list)
+    # Use a dict-of-dicts to aggregate quantities for duplicate (parent, child)
+    # pairs.  Duplicate edges arise when sharing_ratio > 0 causes the same
+    # component to be picked more than once as a child of the same parent in
+    # _build_subtree (random.choice can return the same element on two
+    # iterations of the branching loop).  Without deduplication, _inputs_ok
+    # would check each edge independently (passing if stock >= qty for each
+    # edge separately) while Phase 4 would decrement stock for every edge —
+    # consuming qty * n_duplicates even when stock only held qty, causing
+    # stock to go negative.  Summing quantities into a single CSR entry
+    # ensures both the availability check and the decrement use the same
+    # total quantity.
+    bom_adj: dict[int, dict[int, int]] = defaultdict(lambda: defaultdict(int))
     for e in bom_edges:
-        bom_adj[comp_idx[e.output]].append((comp_idx[e.input], e.quantity))
+        bom_adj[comp_idx[e.output]][comp_idx[e.input]] += e.quantity
 
     ptr_list    = [0]
     inputs_flat = []
     qtys_flat   = []
     for ci in range(n_comps):
-        for inp_ci, qty in bom_adj.get(ci, []):
+        for inp_ci, qty in bom_adj.get(ci, {}).items():
             inputs_flat.append(inp_ci)
             qtys_flat.append(qty)
         ptr_list.append(len(inputs_flat))

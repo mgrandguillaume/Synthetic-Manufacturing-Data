@@ -95,7 +95,7 @@ Controls the shape of the Bill of Materials tree. All intermediate components an
 | `depth` | int ≥ 2 | Number of BOM levels. `depth = 2` means raw material → product (one intermediate level); `depth = 5` means four intermediate levels between raw material and product. Also determines the number of stages workstations are divided into — must not exceed `workstations.count`. Level numbering follows ERP convention: level 0 = raw materials, level `depth` = finished products. |
 | `branching` | [min, max] int | Number of distinct component types that each parent node directly requires. Sampled independently per parent node. A wider range produces more irregular, realistic trees. Example: `[2, 3]` means each assembly requires 2 or 3 direct input types. |
 | `quantity` | [min, max] int | Number of units of each input required to produce one unit of the parent (BOM edge quantity). Sampled independently per BOM edge. Higher values increase the total production volume required to fulfil an order and therefore directly affect simulation duration and recommended `n_ticks`. |
-| `sharing_ratio` | float 0–1 | Probability that, when a new child component is needed, an already-existing component at the same BOM level is reused instead of creating a new one. `0.0` = every component is unique (pure tree); `1.0` = reuse as aggressively as possible given traversal order. Reusing a component adds a second parent to it, turning the BOM tree into a DAG and creating components that are inputs to multiple assemblies. Has no effect if a level contains only one component. |
+| `sharing_ratio` | float 0–1 | Probability that, when a new child component is needed, an already-existing component at the same BOM level is reused instead of creating a new one. `0.0` = every component is unique (pure tree); `1.0` = reuse as aggressively as possible given traversal order. Reusing a component adds a second parent to it, turning the BOM tree into a DAG and creating components that are inputs to multiple assemblies. Has no effect if a level contains only one component. Each parent's direct inputs are always **distinct** — the same component cannot be selected twice for the same parent (which would reduce the effective branching factor and create invalid duplicate BOM edges). |
 
 ---
 
@@ -262,6 +262,8 @@ Level 1   C1   C2        C3   C4         Level 1   C1    C2         C1    C3
 ```
 
 The very first child created at any level is always new (the pool is empty at that point), so `sharing_ratio = 1.0` does not collapse a level to a single component — it reuses as aggressively as possible given the traversal order.
+
+Note that sharing always connects components across **different parents** — the same component can never appear twice as a direct input to the *same* parent. This keeps the effective branching factor equal to the configured range and avoids degenerate BOM edges.
 
 **BOM parameters**
 

@@ -189,8 +189,15 @@ def build_factory(
         if parent_level <= 0:
             return
         child_level = parent_level - 1
+        already_chosen: set[str] = set()   # prevent same child twice per parent
         for _ in range(random.randint(branch_min, branch_max)):
-            pool = shared_pool.get(child_level, [])
+            # Exclude components already chosen for this parent so that each
+            # input type is distinct.  Picking the same component twice would
+            # silently reduce the effective branching factor and create
+            # duplicate BOM edges (same parent→child pair), which causes
+            # stock to go negative in the simulator.
+            pool = [c for c in shared_pool.get(child_level, [])
+                    if c not in already_chosen]
             if pool and random.random() < sharing_ratio:
                 child = random.choice(pool)
             else:
@@ -206,6 +213,7 @@ def build_factory(
                 if child_level > 0:
                     producible.append(child)
                 _build_subtree(child, child_level)
+            already_chosen.add(child)
             bom_edges.append(BomEdge(
                 input=child, output=parent_id,
                 quantity=random.randint(qty_min, qty_max),
