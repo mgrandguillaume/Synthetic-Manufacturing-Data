@@ -426,11 +426,44 @@ def _save_config(n_clicks,
             "output": {"directory": out_dir or "gen_output"},
         }
 
+        # ── Validate before writing ────────────────────────────────────────────
+        from shared_utils import validate_config
+        validate_warnings = []
+        try:
+            validate_warnings = validate_config.validate(new_cfg) or []
+        except validate_config.ConfigError as ce:
+            # Hard errors — do NOT save; return full error list to the UI.
+            error_items = [html.Li(e) for e in ce.errors]
+            warn_items  = [html.Li(w) for w in ce.warnings]
+            children = [
+                html.Div(
+                    [html.Strong(f"{len(ce.errors)} configuration error(s) — config not saved:"),
+                     html.Ul(error_items, style={"marginTop": "6px", "paddingLeft": "18px"})],
+                    className="alert alert-error",
+                ),
+            ]
+            if warn_items:
+                children.append(html.Div(
+                    [html.Strong("Warnings:"), html.Ul(warn_items, style={"marginTop": "6px", "paddingLeft": "18px"})],
+                    className="alert alert-warning",
+                ))
+            return html.Div(children)
+
+        # ── Write config ───────────────────────────────────────────────────────
         with open(store.CONFIG_PATH, "w") as f:
             yaml.dump(new_cfg, f, default_flow_style=False,
                       allow_unicode=True, sort_keys=False)
 
-        return html.Div("Config saved.", className="alert alert-success")
+        # Return success + any soft warnings.
+        children = [html.Div("Config saved.", className="alert alert-success")]
+        if validate_warnings:
+            warn_items = [html.Li(w) for w in validate_warnings]
+            children.append(html.Div(
+                [html.Strong(f"{len(validate_warnings)} warning(s):"),
+                 html.Ul(warn_items, style={"marginTop": "6px", "paddingLeft": "18px"})],
+                className="alert alert-warning",
+            ))
+        return html.Div(children)
 
     except Exception as exc:
         return html.Div(f"Failed to save: {exc}", className="alert alert-error")

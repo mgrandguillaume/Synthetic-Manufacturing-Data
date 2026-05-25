@@ -4,7 +4,6 @@ import os
 import itertools
 import threading
 import yaml
-import pandas as pd
 import dash
 from dash import html, dcc, Input, Output, State, callback, dash_table
 import store
@@ -38,7 +37,6 @@ def _progress_bar(done: int, total: int, current: str) -> html.Div:
     """Render the progress bar widget."""
     pct = round(done / total * 100) if total > 0 else 0
 
-    # Label row: "Run 42 / 160  (26%)"
     if total == 0:
         label = "Preparing…"
     elif done == total:
@@ -47,7 +45,6 @@ def _progress_bar(done: int, total: int, current: str) -> html.Div:
         label = f"Run {done} / {total}  ({pct}%)"
 
     return html.Div([
-        # Label + percentage
         html.Div(
             label,
             style={
@@ -57,9 +54,7 @@ def _progress_bar(done: int, total: int, current: str) -> html.Div:
                 "marginBottom": "6px",
             },
         ),
-        # Track
         html.Div(
-            # Fill
             html.Div(style={
                 "height": "100%",
                 "width": f"{pct}%",
@@ -77,7 +72,6 @@ def _progress_bar(done: int, total: int, current: str) -> html.Div:
                 "marginBottom": "8px",
             },
         ),
-        # Current combo
         html.Div(
             current,
             style={
@@ -115,6 +109,21 @@ def layout():
     rows = [{"Parameter": k, "Values": str(vals), "Count": len(vals)}
             for k, vals in expanded.items()]
 
+    # Warn when depth > 4 is part of the sweep grid.
+    # Each additional BOM level multiplies the component count (by the branching
+    # factor) and the number of ticks required — per-run time grows steeply.
+    depth_vals = expanded.get("depth", [])
+    depth_warning = None
+    if any(d > 4 for d in depth_vals):
+        depth_warning = html.Div([
+            html.Strong("Note: "),
+            "The sweep grid includes BOM depth values above 4. Each additional "
+            "depth level multiplies the number of components by the branching "
+            "factor and requires proportionally more simulation ticks, so "
+            "per-run time increases sharply with depth. Runs at higher depth "
+            "values will take considerably longer than earlier ones.",
+        ], className="alert alert-warning", style={"marginTop": "12px"})
+
     return html.Div([
         html.Div("analyse · sweep", className="af-eyebrow"),
         html.H1("Parameter sweep"),
@@ -137,6 +146,8 @@ def layout():
         ) if rows else html.Div("No sweep parameters defined in config.yaml.",
                                 className="alert alert-info"),
 
+        depth_warning or html.Span(),
+
         html.Hr(className="divider"),
         html.Button("Run sweep", id="sweep-btn", n_clicks=0,
                     className="btn btn-primary btn-full"),
@@ -148,11 +159,14 @@ def layout():
         # Interval fires every 500 ms while a sweep is running; starts disabled.
         dcc.Interval(id="sweep-poll", interval=500, n_intervals=0, disabled=True),
 
-        dcc.Loading(
-            html.Div(id="sweep-results",
-                     children=_build_charts() if store.get("sweep_done") else []),
-            type="circle",
-        ),
+        # sweep-load-trigger fires once ~100 ms after the page mounts so that
+        # layout() returns immediately (no blocking chart work), then the callback
+        # populates results from store.  This also prevents the loading-circle
+        # flicker caused by wrapping sweep-results in dcc.Loading.
+        dcc.Interval(id="sweep-load-trigger", interval=100,
+                     n_intervals=0, max_intervals=1),
+
+        html.Div(id="sweep-results"),
     ])
 
 
@@ -163,25 +177,35 @@ def layout():
     Output("sweep-status",   "children"),
     Output("sweep-progress", "children"),
     Output("sweep-results",  "children"),
-    Input("sweep-btn",  "n_clicks"),
-    Input("sweep-poll", "n_intervals"),
+    Input("sweep-load-trigger", "n_intervals"),  # fires once on page mount
+    Input("sweep-btn",          "n_clicks"),
+    Input("sweep-poll",         "n_intervals"),
     prevent_initial_call=True,
 )
-def _sweep_callback(n_clicks, n_intervals):
+def _sweep_callback(n_load, n_clicks, n_intervals):
     triggered = dash.ctx.triggered_id
+
+    # ── Page-load path: populate results from store if a sweep was already run ──
+    if triggered == "sweep-load-trigger":
+        if store.get("sweep_done"):
+            return True, dash.no_update, dash.no_update, _build_charts()
+        # Check if a sweep is still running from a previous visit
+        prog = store.get("sweep_progress") or {}
+        if prog.get("running"):
+            return False, dash.no_update, dash.no_update, []
+        return True, dash.no_update, dash.no_update, []
 
     # ── Button: start background sweep thread ──────────────────────────────────
     if triggered == "sweep-btn":
         prog = store.get("sweep_progress") or {}
         if prog.get("running"):
             return (
-                False,  # keep interval enabled
+                False,
                 html.Div("A sweep is already running.", className="alert alert-warning"),
                 dash.no_update,
                 dash.no_update,
             )
 
-        # Reset progress state
         store.set("sweep_progress", {
             "running": True, "done": 0, "total": 0,
             "current": "Preparing…", "error": None,
@@ -231,16 +255,16 @@ def _sweep_callback(n_clicks, n_intervals):
 
     if error:
         return (
-            True,   # disable interval
+            True,
             html.Div(f"Sweep failed: {error}", className="alert alert-error"),
             [],
             dash.no_update,
         )
 
     if not running and done > 0:
-        # Sweep finished successfully — disable interval and show charts.
+        # Sweep finished — disable interval and show charts.
         return (
-            True,   # disable interval
+            True,
             html.Div("Sweep complete.", className="alert alert-success"),
             [],
             _build_charts(),

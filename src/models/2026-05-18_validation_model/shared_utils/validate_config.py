@@ -72,7 +72,18 @@ def _bold(s: str)   -> str: return f"\033[1m{s}\033[0m"  if _TTY else s
 # ── Public exception ──────────────────────────────────────────────────────────
 
 class ConfigError(ValueError):
-    """Raised when one or more hard config assertions fail."""
+    """Raised when one or more hard config assertions fail.
+
+    Attributes
+    ----------
+    errors   : list[str]   — the hard error messages
+    warnings : list[str]   — soft warnings collected before the errors were found
+    """
+
+    def __init__(self, message: str, errors: list = (), warnings: list = ()):
+        super().__init__(message)
+        self.errors   = list(errors)
+        self.warnings = list(warnings)
 
 
 # ── Module-level constants ─────────────────────────────────────────────────────
@@ -538,8 +549,12 @@ def validate(cfg: dict) -> None:
         bullet_list = "\n".join(f"  • {e}" for e in errors)
         raise ConfigError(
             _bold(_red("[CONFIG ERROR]")) +
-            f" {len(errors)} validation error(s) in config.yaml:\n{bullet_list}"
+            f" {len(errors)} validation error(s) in config.yaml:\n{bullet_list}",
+            errors,
+            warnings,
         )
 
     if not warnings:
         print("  [validate_config] OK -- all checks passed.")
+
+    return warnings
