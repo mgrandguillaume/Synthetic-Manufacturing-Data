@@ -241,7 +241,7 @@ def layout():
     return html.Div([
         html.Div("analyse · sweep", className="af-eyebrow"),
         html.H1("Parameter sweep"),
-        html.P("Reads grid from config.yaml → sweep:  and simulation params from config.yaml → simulation:",
+        html.P("Run the factory model across a grid of parameter combinations and compare results.",
                className="page-caption"),
 
         html.H2("Sweep grid"),

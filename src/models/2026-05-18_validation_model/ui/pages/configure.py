@@ -74,7 +74,8 @@ def layout():
         html.Div("project · configure", className="af-eyebrow"),
         html.H1("Configure"),
         html.P(
-            f"Editing: {store.CONFIG_PATH}  —  inline comments are stripped on save (PyYAML limitation).",
+            "Adjust factory structure, simulation settings, and sweep ranges. "
+            "Changes take effect after clicking Save config.",
             className="page-caption",
         ),
 
