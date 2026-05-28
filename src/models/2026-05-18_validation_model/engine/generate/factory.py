@@ -398,10 +398,53 @@ def build_factory(
     for comp in producible:
         assert comp in produced, f"Producible component {comp} has no configuration"
 
+    # ── Complexity ─────────────────────────────────────────────────────────────
+    #
+    # C(product) = number of distinct non-raw component types that the product
+    # transitively depends on, excluding the product itself.
+    #
+    # Computed by BFS downward from each product through the BOM DAG.
+    # Raw materials (level == 0) are excluded — they have infinite supply and
+    # no production logic, so they do not contribute to scheduling complexity.
+    #
+    # The children_of map is rebuilt here from the final, renamed bom_edges
+    # so that component IDs are consistent with the rest of the result dict.
+
+    _final_children: dict[str, list[str]] = defaultdict(list)
+    for e in bom_edges:
+        _final_children[e.output].append(e.input)
+
+    _comp_by_id_final: dict[str, Component] = {c.id: c for c in components}
+
+    complexity: dict[str, int] = {}
+    for comp in components:
+        if not comp.is_product:
+            continue
+        visited: set[str] = set()
+        stack = list(_final_children.get(comp.id, []))
+        while stack:
+            node = stack.pop()
+            if node in visited:
+                continue
+            visited.add(node)
+            stack.extend(_final_children.get(node, []))
+        complexity[comp.id] = sum(
+            1 for node in visited
+            if node in _comp_by_id_final and _comp_by_id_final[node].level > 0
+        )
+
+    _c_vals = list(complexity.values())
+    _c_mean = sum(_c_vals) / len(_c_vals) if _c_vals else 0.0
+    _c_max  = max(_c_vals) if _c_vals else 0
+    print(f"  [generate] complexity  "
+          f"mean={_c_mean:.1f}  max={_c_max}  "
+          f"({', '.join(f'{pid}:{c}' for pid, c in complexity.items())})")
+
     return dict(
         components=components, bom_edges=bom_edges,
         workstations=workstations, configurations=configurations,
         layout_edges=layout_edges, producible=producible,
+        complexity=complexity,
     )
 
 

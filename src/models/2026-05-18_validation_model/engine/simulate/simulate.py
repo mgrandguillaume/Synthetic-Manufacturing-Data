@@ -118,6 +118,7 @@ def simulate(
         pre["expl_comps"], pre["expl_qtys"], pre["expl_n"],
         pre["cost_setup_arr"], pre["cost_operating_arr"], pre["cost_transport_arr"],
         pre["state_log"], pre["tp_log"], pre["buf_log"], pre["log_buffers"],
+        pre["buf_stride"],
         pre["failures_enabled"],
         pre["ws_beta"], pre["ws_lambda"], pre["ws_age"], pre["ws_ttf"],
         pre["mttr_min"], pre["mttr_max"],
@@ -129,12 +130,12 @@ def simulate(
     # ── Post-process: NumPy arrays → DataFrames ────────────────────────────────
     dfs = postprocess(pre, last_tick + 1, n_throughput)
 
-    # ── Validate simulation output ─────────────────────────────────────────────
+    # ── Verify simulation output ──────────────────────────────────────────────
     # Hard violations raise SimulateOutputError (real bugs — results discarded).
     # Soft warnings are returned and attached to dfs so the UI can display them
     # alongside the results without blocking the user.
-    from engine.simulate.validate_output import validate as _validate_simulate
-    soft_warnings = _validate_simulate(dfs, buffer_capacity, gen_result)
+    from engine.simulate.verify_output import validate as _verify_simulate
+    soft_warnings = _verify_simulate(dfs, buffer_capacity, gen_result)
     dfs["warnings"] = soft_warnings   # list[str], empty when all checks pass
 
     return dfs

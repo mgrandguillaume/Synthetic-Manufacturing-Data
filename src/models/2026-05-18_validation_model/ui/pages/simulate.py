@@ -1,6 +1,7 @@
 """Simulate page — run a discrete-time simulation on the generated factory."""
 
 import yaml
+import numpy as np
 import dash
 from dash import html, dcc, Input, Output, State, callback
 import plotly.graph_objects as go
@@ -128,19 +129,19 @@ def _build_figures(results: dict) -> dict:
         # Step 1: reconstruct the (n_ticks, n_comps) 2-D array via reshape.
         # comp_names are the unique components in the order postprocess wrote them;
         # they repeat in the same pattern every tick.
+        # ── Geometry: find n_c without reading the full string column ─────────
+        # buf_df is tile-ordered: the same n_c component names repeat every tick,
+        # all sharing the same Time value.  A binary search on the float Time
+        # column finds where the first tick ends — that is n_c — in O(log n)
+        # instead of allocating a 3 M-element Python string array and hashing it.
+        times_arr  = buf_df["Time"].to_numpy()                               # float64, fast
+        n_c        = int(np.searchsorted(times_arr, times_arr[0], side="right"))
+        comp_names = buf_df["Component"].iloc[:n_c].tolist()                 # only n_c strings
+        n_t        = len(times_arr) // n_c                                   # ticks logged
+
         stocks_flat = buf_df["Stock"].to_numpy()
-        times_flat  = buf_df["Time"].to_numpy()
-        comp_col    = buf_df["Component"].to_numpy()
-
-        # Number of non-raw components = number of unique entries per tick group.
-        # They appear in the same fixed order for every tick (np.tile pattern).
-        comp_names = list(dict.fromkeys(comp_col))   # first-occurrence order, fast
-        n_c = len(comp_names)
-        n_t = len(stocks_flat) // n_c                # number of ticks logged
-
-        # Reshape to (n_ticks, n_comps) — relies on tick-major ordering from postprocess.
-        stocks_2d = stocks_flat[: n_t * n_c].reshape(n_t, n_c)
-        times_1d  = times_flat[::n_c][:n_t]          # one time value per tick row
+        stocks_2d   = stocks_flat[:n_t * n_c].reshape(n_t, n_c)
+        times_1d    = times_arr[::n_c][:n_t]          # one time value per tick row
 
         # Step 2: compute stride so each trace has at most _BUF_MAX_PTS points.
         step = max(1, n_t // _BUF_MAX_PTS)

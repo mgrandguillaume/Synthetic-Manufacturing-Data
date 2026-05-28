@@ -51,6 +51,7 @@ Then open **http://127.0.0.1:8501** in your browser. The sidebar groups pages in
   - [Performance notes](#performance-notes)
   - [Parameter groups](#parameter-groups)
   - [Alpha (α)](#alpha-α)
+  - [Complexity (C)](#complexity-c)
   - [Output files](#output-files-2)
   - [Visualize](#visualize)
     - [Single simulation run](#single-simulation-run)
@@ -73,6 +74,7 @@ Then open **http://127.0.0.1:8501** in your browser. The sidebar groups pages in
   - [Fixed, deterministic order interarrival](#fixed-deterministic-order-interarrival)
   - [No preemption](#no-preemption)
   - [No quality control or scrap](#no-quality-control-or-scrap)
+  - [Parameter combinations can cause irrecoverable deadlock](#parameter-combinations-can-cause-irrecoverable-deadlock)
 
 ---
 
@@ -460,6 +462,8 @@ Example: WS_1 produces COMP_L1_1_(P1), WS_3 assembles PROD_1
 | `configurations.csv` | Each (workstation, component) capability pair with processing time, setup time, setup cost, and operating cost |
 | `layout.csv` | Material flow edges: origin workstation, destination workstation, capacity, and transport cost |
 
+In addition to the CSV files, `generate_from_params()` returns a `"complexity"` key in its result dict containing a per-product complexity mapping `{product_id: C}`. This is available for programmatic use without re-reading any CSV. During a parameter sweep it is automatically aggregated into `gen_stats.csv` (see [Complexity (C)](#complexity-c) below).
+
 ---
 
 ## Simulate
@@ -758,11 +762,35 @@ For each run, the alpha parameter is computed as:
 
 Alpha is a derived topology metric that summarises the serial/parallel structure of the factory (see the Layout section under Generate). It is prepended to every output row so that results can be grouped and plotted against it directly.
 
+### Complexity (C)
+
+For each product, complexity is computed at generation time as:
+
+```
+C(product) = number of distinct non-raw component types transitively required
+             to produce one unit of the product
+```
+
+Concretely: starting from the product node, the generator performs a BFS downward through the BOM DAG and counts all reachable components with `level > 0`, excluding the product itself. Raw materials (`level = 0`) are excluded because they have infinite supply and contribute no scheduling complexity.
+
+Two aggregate values are written to `gen_stats.csv` per sweep run:
+
+| Column | Description |
+|---|---|
+| `mean_complexity` | Mean C across all products in the run |
+| `max_complexity` | Maximum C across all products in the run |
+
+With `sharing_ratio = 0`, all products have identical BOM subtrees and both values are equal. With `sharing_ratio > 0`, products that inherit more shared intermediate components have a smaller individual C — mean and max diverge, and the gap reflects how asymmetric the sharing turned out to be for that run.
+
+Unlike α, which captures the ratio of BOM depth to workstation capacity, C captures the absolute number of component types a product depends on. A factory can have low α (many workstations relative to depth) and still have high C if the BOM is wide. The two metrics are therefore complementary: α describes scheduling pressure, C describes structural complexity.
+
+For single-run programmatic access, `gen_result["complexity"]` holds the full `{product_id: C}` dict without needing a sweep.
+
 ### Output files
 
 | File | Contents |
 |---|---|
-| `gen_stats.csv` | Per-run factory structure counts: raw materials, non-raw components, configurations, layout edges |
+| `gen_stats.csv` | Per-run factory structure counts: raw materials, non-raw components, configurations, layout edges, and product complexity (`mean_complexity`, `max_complexity`) |
 | `state_summary.csv` | Per-run, per-tick state percentages (Working / Starved / Blocked) averaged across all workstations |
 | `utilization.csv` | Per-run utilization breakdown across all workstations |
 | `throughput.csv` | Per-run throughput and lead time for each completed order |
@@ -811,7 +839,8 @@ Run from the **Validate** page in the UI, or call it directly:
 
 ```python
 from analysis.model_validation.validate import run_all
-passed = run_all(show_charts=False, report_dir="analysis/model_validation/validation_output")
+
+passed = run_all(show_charts=False, report_dir="analysis/model_verification/validation_output")
 ```
 
 Results are written to `analysis/model_validation/validation_output/validation_report.txt` and displayed in the UI. Chart data is saved as CSVs in the same folder.
@@ -944,3 +973,33 @@ Once a job has started on a workstation it runs to completion. A higher-priority
 ### No quality control or scrap
 
 All units produced are assumed to be defect-free. There is no rework, no scrap rate, and no re-inspection. The Quality Inspection node (QI) is purely a sink — it does not reject or hold back any output. In reality, quality failures drive additional production demand, consume machine time on rework, and introduce feedback loops that are absent from this model.
+
+### Parameter combinations can cause irrecoverable deadlock
+
+Certain combinations of `bom.depth`, `workstations.count`, `bom.branching`, and `simulation.buffer_capacity` lead to a **permanent blocking/starvation cascade** from which the simulation cannot recover — resulting in zero completed orders even if `n_ticks` is very large.
+
+**Mechanism.** With a deep BOM (depth ≥ 5) and few workstations, each BOM level may have only one or two workstations. A typical cascade looks like this:
+
+1. Each level-1 workstation produces many component types. It fills the buffer for one component to `buffer_capacity` and enters the **blocked** state.
+2. A blocked workstation cannot be reassigned to a different component — it must wait until the downstream consumer takes a unit. But the downstream consumer is **starved**: the specific component *it* needs is at stock = 0 (a different component from the one that is blocking).
+3. Because every level-1 workstation is blocked on a different full-buffer component, no level-1 production can proceed. All higher-level assembly is therefore permanently starved.
+4. This deadlock persists for the remainder of the simulation. No orders complete.
+
+This is mechanically analogous to a **circular-wait deadlock** in a concurrent system, except that the wait cycle involves mismatched component types rather than resource locks. Unlike real factories — where a supervisor would physically move parts, use overflow storage, or cancel and restart jobs — the DTS scheduler has no intervention mechanism and no global view of the deadlock state.
+
+**The α threshold.** The sweep analysis shows a clear phase transition around **α = depth / workstations_count ≈ 0.3–0.4**. Below this threshold most configurations complete all orders; above it starvation escalates sharply. As a practical guideline:
+
+| α range | Typical behaviour |
+|---|---|
+| < 0.3 | Orders usually complete; starvation is transient |
+| 0.3 – 0.5 | Increasing risk of partial or total deadlock |
+| > 0.5 (with deep BOM) | High probability of permanent deadlock; zero orders completed |
+
+**Buffer capacity interaction.** The deadlock risk compounds when `buffer_capacity` is small relative to the BOM explosion quantity. BOM explosion quantities grow as `branching_max ^ depth × quantity_max`, so at depth 5 with branching [2, 3] and quantity [1, 3] one order can require hundreds of units of a level-1 component. If `buffer_capacity` is only 10, workstations fill their output buffers quickly and spend most of the simulation blocked.
+
+**Config consistency guidelines.** To avoid this condition:
+
+- Keep `α = depth / workstations.count` below **0.3** when using `assembly_type` with a deep BOM. This means `workstations.count` should scale with `depth`, not remain fixed as depth increases.
+- Set `buffer_capacity` to at least **`branching_max ^ depth × quantity_max`** if you want to be certain that blocking is not the binding constraint. For sweeps up to depth 4 and branching [2, 3], a value of 50–100 is usually sufficient.
+- For sweep grids that include `depth > 4`, verify on a single run at the highest depth and lowest workstation count that at least one order completes before committing to the full grid.
+- The **Sweep** page in the UI warns when swept `depth > 4` is detected; treat those runs as exploratory rather than production-quality simulation results.

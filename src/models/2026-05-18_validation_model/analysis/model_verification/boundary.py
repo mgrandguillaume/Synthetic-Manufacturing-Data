@@ -10,6 +10,12 @@ Tests
                          an astronomically long characteristic life.
 5. sharing_ratio = 1.0 → every BOM level uses one shared component, so
                          n_non_raw_components == depth (one per level).
+6. Deterministic       → two runs with the same seed produce identical
+                         throughput, utilization, and costs DataFrames.
+7. Order cycling       → with n_orders = 6 and n_products = 3, each
+                         product receives exactly 2 completed orders.
+8. BOM component count → with depth = 3, branching = 2, n_products = 1,
+                         sharing_ratio = 0: n_non_raw == 1 + 2 + 4 = 7.
 """
 
 from __future__ import annotations
@@ -157,7 +163,7 @@ def _test_full_sharing() -> tuple[str, bool, str]:
     gen_params = _gen(
         depth         = depth,
         sharing_ratio = 1.0,
-        n_products    = 2,      # second product must reuse all of the first's components
+        n_products    = 1,      # single product: one component per level, total = depth
         branching     = [1, 1], # exactly 1 child per node — sharing can always apply
         quantity      = [1, 1],
         workstations_count = depth,    # at least depth workstations
@@ -172,6 +178,124 @@ def _test_full_sharing() -> tuple[str, bool, str]:
         f"Expected n_non_raw_components = depth ({depth}), got {n_non_raw}."
     )
     return "boundary_full_sharing", passed, msg
+
+
+def _test_deterministic() -> tuple[str, bool, str]:
+    """
+    Running simulate() twice with the same seed must yield identical results.
+
+    Compares throughput, utilization, and costs DataFrames between the two
+    runs.  A mismatch means a non-seeded RNG call or hidden global state
+    exists somewhere in preprocess / the tick loop / postprocess.
+    """
+    gen     = generate_from_params(_gen())
+    result1 = simulate(gen, **_sim())
+    result2 = simulate(gen, **_sim())
+
+    for name in ("throughput", "utilization", "costs"):
+        df1 = result1[name].reset_index(drop=True)
+        df2 = result2[name].reset_index(drop=True)
+        if not df1.equals(df2):
+            return (
+                "boundary_deterministic",
+                False,
+                f"DataFrame '{name}' differs between two runs with the same seed — "
+                "non-seeded RNG or hidden global state detected.",
+            )
+
+    return (
+        "boundary_deterministic",
+        True,
+        "Two runs with the same seed produce identical throughput, utilization, "
+        "and costs — correct.",
+    )
+
+
+def _test_order_cycling() -> tuple[str, bool, str]:
+    """
+    With n_orders = 6 and n_products = 3, each product must receive exactly
+    2 completed orders.  Tests the round-robin order-release logic.
+    """
+    n_products = 3
+    n_orders   = 6
+    expected_per_product = n_orders // n_products   # = 2
+
+    gen    = generate_from_params(_gen(
+        n_products         = n_products,
+        workstations_count = 6,   # 2 per stage; enough for 3-product BOM
+    ))
+    result = simulate(gen, **_sim(n_orders=n_orders, n_ticks=6000))
+    tp     = result["throughput"]
+
+    if len(tp) < n_orders:
+        return (
+            "boundary_order_cycling",
+            False,
+            f"Only {len(tp)}/{n_orders} orders completed — "
+            "increase n_ticks before this check is meaningful.",
+        )
+
+    counts = tp["Product"].value_counts().to_dict()
+    wrong  = {p: c for p, c in counts.items() if c != expected_per_product}
+
+    if not wrong:
+        return (
+            "boundary_order_cycling",
+            True,
+            f"Each of {n_products} products received exactly "
+            f"{expected_per_product} orders — correct.",
+        )
+    else:
+        return (
+            "boundary_order_cycling",
+            False,
+            f"Uneven order distribution (expected {expected_per_product} each): "
+            + ", ".join(f"{p}={c}" for p, c in sorted(wrong.items())),
+        )
+
+
+def _test_bom_component_count() -> tuple[str, bool, str]:
+    """
+    With depth = 3, branching = 2, n_products = 1, sharing_ratio = 0 the BOM
+    is a perfect binary tree:
+
+        level 3 (product)  : 2^0 = 1
+        level 2            : 2^1 = 2
+        level 1            : 2^2 = 4
+        ─────────────────────────────
+        total non-raw      : 7  (= 2^3 − 1)
+
+    Tests that the BOM generator builds the tree with the correct node count.
+    """
+    depth     = 3
+    branching = 2
+    expected  = sum(branching ** i for i in range(depth))   # 1 + 2 + 4 = 7
+
+    gen_result = generate_from_params(_gen(
+        depth              = depth,
+        branching          = [branching, branching],
+        sharing_ratio      = 0.0,
+        n_products         = 1,
+        workstations_count = depth,   # minimum valid (one workstation per stage)
+    ))
+    n_non_raw = sum(1 for c in gen_result["components"] if c.level > 0)
+    passed    = n_non_raw == expected
+
+    if passed:
+        return (
+            "boundary_bom_component_count",
+            True,
+            f"n_non_raw = {n_non_raw} == {expected} "
+            f"(1 + {branching} + {branching}²  for depth={depth}, branching={branching}) "
+            "— correct.",
+        )
+    else:
+        return (
+            "boundary_bom_component_count",
+            False,
+            f"Expected {expected} non-raw components "
+            f"(depth={depth}, branching={branching}), got {n_non_raw}.",
+        )
 
 
 # ── Public check function ──────────────────────────────────────────────────────
@@ -190,4 +314,7 @@ def check() -> list[tuple[str, bool, str]]:
         _test_large_buffer(),
         _test_large_lambda(),
         _test_full_sharing(),
+        _test_deterministic(),
+        _test_order_cycling(),
+        _test_bom_component_count(),
     ]

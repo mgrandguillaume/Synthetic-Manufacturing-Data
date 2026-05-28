@@ -33,8 +33,8 @@ _store: dict = {
     # Progress reported by the background sweep thread.
     # Keys: running (bool), done (int), total (int), current (str), error (str|None)
     "sweep_progress":  {"running": False, "done": 0, "total": 0, "current": "", "error": None},
-    "validate_done":   False,
-    "validate_passed": None,
+    "verify_done":   False,
+    "verify_passed": None,
     "avail_done":      False,
     "avail_theo_mid":  None,
     "avail_theo_int":  None,

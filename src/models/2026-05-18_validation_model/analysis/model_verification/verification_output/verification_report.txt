@@ -1,6 +1,6 @@
 ────────────────────────────────────────────────────────────────────────
-  Validation Report — Assembly Factory Model
-  Generated: 2026-05-26 00:22:38
+  Verification Report — Assembly Factory Model
+  Generated: 2026-05-27 16:14:08
 ────────────────────────────────────────────────────────────────────────
 
   1. Conservation Laws  (must never fail)
@@ -12,6 +12,7 @@
      (0.4 s)
 
   2. Boundary / Degenerate Cases  (unit tests)
+     zero orders · single order · large buffer · large λ · full sharing · deterministic · order cycling · BOM component count
 
   [PASS]  boundary_zero_orders
          throughput DataFrame is empty — correct.
@@ -21,11 +22,18 @@
          BlockedPct = 0 for all workstations — correct.
   [PASS]  boundary_large_lambda
          FailedPct = 0 with λ = 1 000 000 h — correct.
-  [FAIL]  boundary_full_sharing
-         Expected n_non_raw_components = depth (3), got 4.
+  [PASS]  boundary_full_sharing
+         n_non_raw_components = 3 == depth (3) — correct.
+  [PASS]  boundary_deterministic
+         Two runs with the same seed produce identical throughput, utilization, and costs — correct.
+  [PASS]  boundary_order_cycling
+         Each of 3 products received exactly 2 orders — correct.
+  [PASS]  boundary_bom_component_count
+         n_non_raw = 7 == 7 (1 + 2 + 2²  for depth=3, branching=2) — correct.
      (0.1 s)
 
   3. Monotonicity  (direction-of-effect tests)
+     more workstations · larger buffer · more orders · higher branching · higher BOM quantity
 
   [PASS]  monotonicity_more_workstations
          Makespans decrease with more workstations — correct. (ws=2: 14.20 h, ws=4: 2.70 h, ws=8: 2.65 h)
@@ -33,7 +41,11 @@
          Makespans decrease with larger buffer — correct. (buf=2: 2.85 h, buf=10: 2.70 h, buf=100: 2.70 h)
   [PASS]  monotonicity_more_orders
          Makespans increase with more orders — correct. (orders=3: 1.60 h, orders=6: 2.00 h, orders=12: 3.15 h)
-     (0.1 s)
+  [PASS]  monotonicity_higher_branching_more_components
+         Component count strictly increases with branching — correct. (branching=1: 3 components, branching=2: 7 components, branching=3: 13 components)
+  [PASS]  monotonicity_higher_quantity_longer_leadtime
+         Mean lead time strictly increases with BOM quantity — correct. (qty=1: 1.28 h, qty=2: 1.58 h, qty=3: 1.98 h)
+     (0.2 s)
 
   4. Statistical / Theoretical  (Little's Law + availability)
 
@@ -44,5 +56,5 @@
      (0.0 s)
 
 ────────────────────────────────────────────────────────────────────────
-  Overall: ONE OR MORE CHECKS FAILED
+  Overall: ALL CHECKS PASSED
 ────────────────────────────────────────────────────────────────────────

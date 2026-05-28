@@ -247,9 +247,16 @@ def preprocess(
     cost_repair_arr = np.zeros(n_ws, dtype=np.float64)
 
     # ── Output log arrays ──────────────────────────────────────────────────────
-    state_log = np.zeros((n_ticks, n_ws),   dtype=np.int8)
-    tp_log    = np.zeros((n_orders, 5),     dtype=np.float64)
-    buf_log   = (np.zeros((n_ticks, n_comps), dtype=np.int32)
+    # Buffer logging is strided: only every buf_stride-th tick is recorded so
+    # that (n_ticks, n_comps) never materialises as a multi-GB array.
+    # Target ≤ BUF_MAX_TICKS rows in the chart regardless of simulation length.
+    BUF_MAX_TICKS = 5_000
+    buf_stride    = max(1, n_ticks // BUF_MAX_TICKS)
+    buf_n_rows    = math.ceil(n_ticks / buf_stride)
+
+    state_log = np.zeros((n_ticks,    n_ws),    dtype=np.int8)
+    tp_log    = np.zeros((n_orders,   5),       dtype=np.float64)
+    buf_log   = (np.zeros((buf_n_rows, n_comps), dtype=np.int32)
                  if log_buffers else np.zeros((1, 1), dtype=np.int32))
 
     return dict(
@@ -313,9 +320,10 @@ def preprocess(
         cost_operating_arr = cost_operating_arr,
         cost_transport_arr = cost_transport_arr,
         # ── Output logs ────────────────────────────────────────────────────
-        state_log = state_log,
-        tp_log    = tp_log,
-        buf_log   = buf_log,
+        state_log  = state_log,
+        tp_log     = tp_log,
+        buf_log    = buf_log,
+        buf_stride = buf_stride,
         # ── Weibull failure arrays ─────────────────────────────────────────
         ws_beta        = ws_beta,
         ws_lambda      = ws_lambda,

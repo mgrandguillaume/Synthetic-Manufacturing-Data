@@ -17,10 +17,17 @@ Tests
 3. More orders → longer makespan.
    (n_orders: 3 → 6 → 12, everything else fixed)
 
-Each test runs the simulation at three levels of the swept parameter and
-checks that the direction of the trend in makespan is (weakly) correct.
-Because each run uses the same seed, results are deterministic and can be
-audited exactly.
+4. Higher branching → more non-raw components.
+   (branching: 1 → 2 → 3, depth=3, sharing_ratio=0, n_products=1)
+   Generator-only test; no simulation needed.
+
+5. Higher BOM quantity → longer mean lead time.
+   (quantity: [1,1] → [2,2] → [3,3], everything else fixed)
+
+Each test runs the simulation / generator at three levels of the swept
+parameter and checks that the direction of the trend is (weakly or strictly)
+correct.  Because each run uses the same seed, results are deterministic and
+can be audited exactly.
 
 producers_per_component is set high so every workstation can be a producer,
 making the capacity effect clearly visible.
@@ -163,6 +170,96 @@ def _test_more_orders() -> tuple[str, bool, str]:
     return "monotonicity_more_orders", monotone, msg
 
 
+def _test_higher_branching_more_components() -> tuple[str, bool, str]:
+    """
+    Higher branching factor → strictly more non-raw components.
+
+    With depth = 3, n_products = 1, sharing_ratio = 0 and branching fixed to
+    b, the BOM is a perfect b-ary tree with node count:
+
+        n_non_raw = 1 + b + b²   (levels 1, 2, 3)
+
+    Testing branching 1 → 2 → 3 gives counts 3 → 7 → 13, which must be
+    strictly increasing.  This is a generator-only test (no simulation).
+    """
+    depth            = 3
+    branching_values = [1, 2, 3]
+    counts: list[int] = []
+
+    for b in branching_values:
+        gen_result = generate_from_params(_gen(
+            depth              = depth,
+            branching          = [b, b],
+            sharing_ratio      = 0.0,
+            n_products         = 1,
+            workstations_count = depth,   # minimum valid
+        ))
+        n_non_raw = sum(1 for c in gen_result["components"] if c.level > 0)
+        counts.append(n_non_raw)
+
+    monotone = all(counts[i + 1] > counts[i] for i in range(len(counts) - 1))
+    detail   = ", ".join(
+        f"branching={b}: {n} components"
+        for b, n in zip(branching_values, counts)
+    )
+    if monotone:
+        return (
+            "monotonicity_higher_branching_more_components",
+            True,
+            f"Component count strictly increases with branching — correct. ({detail})",
+        )
+    else:
+        return (
+            "monotonicity_higher_branching_more_components",
+            False,
+            f"Component count did NOT strictly increase with branching. ({detail})",
+        )
+
+
+def _test_higher_quantity_longer_leadtime() -> tuple[str, bool, str]:
+    """
+    Higher BOM edge quantity → strictly longer mean lead time.
+
+    With quantity = [q, q] for q = 1, 2, 3 and everything else fixed, each
+    order requires proportionally more units of every component.  More
+    production work per order must translate into a longer lead time.
+
+    buffer_capacity is set generously (200) so that blocking is not the
+    binding constraint — the effect must come from processing volume alone.
+    """
+    qty_values  = [1, 2, 3]
+    lead_times: list[float] = []
+
+    for q in qty_values:
+        gen    = generate_from_params(_gen(quantity=[q, q]))
+        result = simulate(gen, **_sim(
+            n_orders        = 3,
+            n_ticks         = 15_000,
+            buffer_capacity = 200,
+        ))
+        tp = result["throughput"]
+        lead_times.append(
+            float(tp["LeadTime"].mean()) if not tp.empty else float("inf")
+        )
+
+    monotone = all(lead_times[i + 1] > lead_times[i] for i in range(len(lead_times) - 1))
+    detail   = ", ".join(
+        f"qty={q}: {lt:.2f} h" for q, lt in zip(qty_values, lead_times)
+    )
+    if monotone:
+        return (
+            "monotonicity_higher_quantity_longer_leadtime",
+            True,
+            f"Mean lead time strictly increases with BOM quantity — correct. ({detail})",
+        )
+    else:
+        return (
+            "monotonicity_higher_quantity_longer_leadtime",
+            False,
+            f"Mean lead time did NOT strictly increase with BOM quantity. ({detail})",
+        )
+
+
 # ── Public check function ──────────────────────────────────────────────────────
 
 def check() -> list[tuple[str, bool, str]]:
@@ -177,4 +274,6 @@ def check() -> list[tuple[str, bool, str]]:
         _test_more_workstations(),
         _test_larger_buffer(),
         _test_more_orders(),
+        _test_higher_branching_more_components(),
+        _test_higher_quantity_longer_leadtime(),
     ]

@@ -2,15 +2,15 @@
 # Validation diagnostic charts for the Assembly Factory model.
 #
 # Runs three targeted simulations, saves their output to CSV files in
-# validation_output/, then renders the results as a single figure:
+# verification_output/, then renders the results as a single figure:
 #
 #   1. Cumulative orders completed over time  (step chart)
 #   2. Buffer levels over time per component  (line chart)
 #   3. Observed vs. theoretical availability  (bar + reference line)
 #
-# Run standalone:  python visualize_validation.py
+# Run standalone:  python visualize_verification.py
 #   → re-generates data and shows charts in one go.
-# Or call generate_data() + show() separately from validate.py / run.py.
+# Or call generate_data() + show() separately from verification.py / run.py.
 # Shared style:    theme.py (model root) — colours, palette, apply_axis_style()
 # Dependencies:    pip install pandas plotly
 
@@ -32,7 +32,7 @@ from engine.simulate.simulate import simulate               # noqa: E402
 from shared_utils import theme                              # noqa: E402
 
 _DEFAULT_OUTPUT_DIR = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "validation_output"
+    os.path.dirname(os.path.abspath(__file__)), "verification_output"
 )
 
 # ── Simulation parameters for the diagnostic charts ───────────────────────────
@@ -159,7 +159,7 @@ def show(output_dir: str = _DEFAULT_OUTPUT_DIR) -> None:
         if not os.path.exists(p):
             raise FileNotFoundError(
                 f"{os.path.basename(p)} not found in {output_dir}.\n"
-                "Run validation first:  python run.py --validate"
+                "Run verification first:  python run.py --verify"
             )
 
     orders_df       = pd.read_csv(orders_path)
@@ -240,7 +240,7 @@ def show(output_dir: str = _DEFAULT_OUTPUT_DIR) -> None:
 
     # ── Global styling ─────────────────────────────────────────────────────────
     fig.update_layout(
-        title=dict(text="Validation Diagnostics — Assembly Factory",
+        title=dict(text="Verification Diagnostics — Assembly Factory",
                    font=dict(size=20, color=theme.TEXT), x=0.02, y=0.99),
         paper_bgcolor = theme.BG,
         plot_bgcolor  = theme.BG,

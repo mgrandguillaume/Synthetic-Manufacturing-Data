@@ -12,7 +12,7 @@ bom:
   - 3
   sharing_ratio: 0.3
 workstations:
-  count: 12
+  count: 15
   stage_balance: 1.0
   producers_per_component:
   - 1
@@ -39,7 +39,7 @@ simulation:
   tick_duration: 0.05
   buffer_capacity: 10
   order_interarrival: 10
-  n_ticks: 100000
+  n_ticks: 3000
   n_orders: 10
 failures:
   enabled: true

@@ -157,8 +157,9 @@ def _numba_tick_loop(
     # Output log arrays (pre-allocated)
     state_log:          np.ndarray,   # int8[n_ticks, n_ws]
     tp_log:             np.ndarray,   # float64[n_orders, 5]
-    buf_log:            np.ndarray,   # int32[n_ticks, n_comps]
+    buf_log:            np.ndarray,   # int32[ceil(n_ticks/buf_stride), n_comps]
     log_buffers:        bool,
+    buf_stride:         int,          # log every buf_stride-th tick (1 = every tick)
     # ── Machine failure parameters (Weibull model) ────────────────────────────
     failures_enabled:   bool,
     ws_beta:            np.ndarray,   # float64[n_ws]  Weibull shape β per WS
@@ -536,10 +537,11 @@ def _numba_tick_loop(
         for wi in range(n_ws):
             state_log[tick, wi] = ws_state[wi]
 
-        # ── 7. Log buffer levels (optional) ──────────────────────────────────
-        if log_buffers:
+        # ── 7. Log buffer levels (optional, strided) ─────────────────────────
+        if log_buffers and tick % buf_stride == 0:
+            buf_slot = tick // buf_stride
             for ci in range(n_comps):
-                buf_log[tick, ci] = stock[ci]
+                buf_log[buf_slot, ci] = stock[ci]
 
         # ── 8. Stop when all orders fulfilled ────────────────────────────────
         if orders_done >= n_orders:

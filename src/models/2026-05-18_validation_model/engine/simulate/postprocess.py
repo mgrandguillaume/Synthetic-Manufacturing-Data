@@ -104,14 +104,28 @@ def postprocess(
     cost_repair_arr    = pre["cost_repair_arr"]
 
     # ── States DataFrame ───────────────────────────────────────────────────────
-    tick_idx  = np.repeat(np.arange(actual_ticks), n_ws)
-    wi_idx    = np.tile(np.arange(n_ws), actual_ticks)
+    # Vectorised construction — avoid Python-level list comprehensions over
+    # millions of rows.  pd.Categorical.from_codes stores only an int32 code
+    # array + a small category list, so memory and build time are both far
+    # lower than materialising millions of Python strings.
+    #
+    # state_log[:actual_ticks] has shape (actual_ticks, n_ws).
+    # Ravelling in C (row-major) order is identical to the old
+    # np.repeat/np.tile pattern: for each tick t, workstations 0…n_ws-1.
+    tick_idx    = np.repeat(np.arange(actual_ticks, dtype=np.int32), n_ws)
+    flat_states = state_log[:actual_ticks].ravel().astype(np.int8)   # state codes
+
     states_df = pd.DataFrame({
         "Tick":        tick_idx,
         "Time":        np.round(tick_idx * tick_duration, 6),
-        "Workstation": [ws_ids[wi] for wi in wi_idx],
-        "State":       [_STATE_NAMES[int(state_log[t, wi])]
-                        for t, wi in zip(tick_idx, wi_idx)],
+        "Workstation": pd.Categorical.from_codes(
+                           np.tile(np.arange(n_ws, dtype=np.int32), actual_ticks),
+                           categories=ws_ids,
+                       ),
+        "State":       pd.Categorical.from_codes(
+                           flat_states,
+                           categories=_STATE_NAMES,
+                       ),
     })
 
     # ── Factory Physics: effective process time and availability ───────────────
@@ -230,7 +244,7 @@ def postprocess(
             "Time":     tp_log[:n_throughput, 0],
             "Products": tp_log[:n_throughput, 1].astype(int),
             "Order":    tp_log[:n_throughput, 2].astype(int),
-            "Product":  [comp_ids[int(tp_log[i, 3])] for i in range(n_throughput)],
+            "Product":  np.array(comp_ids)[tp_log[:n_throughput, 3].astype(int)],
             "LeadTime": tp_log[:n_throughput, 4],
         })
     else:
@@ -250,15 +264,29 @@ def postprocess(
 
     # ── Buffers DataFrame (optional) ───────────────────────────────────────────
     if log_buffers:
-        non_raw = [ci for ci, c in enumerate(components) if c.level > 0]
-        t_idx   = np.repeat(np.arange(actual_ticks), len(non_raw))
-        ci_idx  = np.tile(non_raw, actual_ticks)
-        buf_df  = pd.DataFrame({
+        # buf_log was written every buf_stride ticks, so rows correspond to
+        # actual ticks 0, stride, 2·stride, …  Only the first n_buf_samples
+        # rows were written (simulation may have stopped before n_ticks).
+        buf_stride    = pre.get("buf_stride", 1)
+        n_buf_samples = (actual_ticks - 1) // buf_stride + 1
+        sample_ticks  = np.arange(n_buf_samples, dtype=np.int32) * buf_stride
+
+        non_raw    = np.array([ci for ci, c in enumerate(components) if c.level > 0],
+                              dtype=np.int32)
+        n_non_raw  = len(non_raw)
+
+        # Vectorised component labels — use Categorical.from_codes so that
+        # only n_non_raw Python strings are ever created (not millions of copies).
+        comp_cats  = [comp_ids[ci] for ci in non_raw]   # tiny: one label per component
+        comp_codes = np.tile(np.arange(n_non_raw, dtype=np.int32), n_buf_samples)
+        t_idx      = np.repeat(sample_ticks, n_non_raw)
+
+        buf_df = pd.DataFrame({
             "Tick":      t_idx,
             "Time":      np.round(t_idx * tick_duration, 6),
-            "Component": [comp_ids[ci] for ci in ci_idx],
-            "Stock":     buf_log[:actual_ticks][:, non_raw].ravel().astype(int),
-            "Level":     comp_level_arr[ci_idx],
+            "Component": pd.Categorical.from_codes(comp_codes, categories=comp_cats),
+            "Stock":     buf_log[:n_buf_samples][:, non_raw].ravel().astype(np.int32),
+            "Level":     comp_level_arr[np.tile(non_raw, n_buf_samples)],
         })
     else:
         buf_df = pd.DataFrame(columns=["Tick", "Time", "Component", "Stock", "Level"])

@@ -1,16 +1,16 @@
 """
-Validation orchestrator for the Assembly Factory model.
+Verification orchestrator for the Assembly Factory model.
 
-Runs every validation check and writes a plain-text report.
+Runs every verification check and writes a plain-text report.
 
 Usage
 -----
   # From model root:
-  python -c "import sys; sys.path.insert(0,'validate'); from validate import validate; validate.run_all()"
+  python -c "import sys; sys.path.insert(0,'analysis/model_verification'); from verification import run_all; run_all()"
 
   # More conveniently, via run.py:
-  python run.py --validate        # generate → sweep → visualize → validate
-  python run.py --validate-only   # validate only (no generate/sweep/visualize)
+  python run.py --verify        # generate → sweep → visualize → verify
+  python run.py --verify-only   # verify only (no generate/sweep/visualize)
 """
 
 from __future__ import annotations
@@ -63,8 +63,8 @@ def run_all(
         If True, open the three diagnostic Plotly charts in the browser after
         the numerical checks finish.
     report_dir
-        Directory in which to write ``validation_report.txt``.
-        Defaults to ``<model_root>/validate/validation_output/``.
+        Directory in which to write ``verification_report.txt``.
+        Defaults to ``<model_root>/analysis/model_verification/verification_output/``.
 
     Returns
     -------
@@ -73,14 +73,14 @@ def run_all(
     """
     if report_dir is None:
         report_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                  "validation_output")
+                                  "verification_output")
     os.makedirs(report_dir, exist_ok=True)
 
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     lines: list[str] = []
 
     lines.append(_SEP)
-    lines.append(f"  Validation Report — Assembly Factory Model")
+    lines.append(f"  Verification Report — Assembly Factory Model")
     lines.append(f"  Generated: {timestamp}")
     lines.append(_SEP)
 
@@ -103,6 +103,8 @@ def run_all(
     # ── 2. Boundary / degenerate cases ────────────────────────────────────────
     lines.append("")
     lines.append("  2. Boundary / Degenerate Cases  (unit tests)")
+    lines.append("     zero orders · single order · large buffer · large λ · "
+                 "full sharing · deterministic · order cycling · BOM component count")
     lines.append("")
     t0 = time.perf_counter()
     try:
@@ -117,6 +119,8 @@ def run_all(
     # ── 3. Monotonicity ───────────────────────────────────────────────────────
     lines.append("")
     lines.append("  3. Monotonicity  (direction-of-effect tests)")
+    lines.append("     more workstations · larger buffer · more orders · "
+                 "higher branching · higher BOM quantity")
     lines.append("")
     t0 = time.perf_counter()
     try:
@@ -154,14 +158,14 @@ def run_all(
     report = "\n".join(lines)
     print(report)
 
-    report_path = os.path.join(report_dir, "validation_report.txt")
+    report_path = os.path.join(report_dir, "verification_report.txt")
     with open(report_path, "w", encoding="utf-8") as fh:
         fh.write(report + "\n")
     print(f"\n  Report written to {report_path}")
 
     # ── Generate chart data and (optionally) show charts ─────────────────────────
     try:
-        from . import visualize_validation as _vv
+        from . import visualize_verification as _vv
         print("\n  Generating validation chart data…")
         _vv.generate_data(report_dir)
         if show_charts:

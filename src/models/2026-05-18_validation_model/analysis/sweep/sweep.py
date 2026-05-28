@@ -179,12 +179,15 @@ def main(progress_callback=None, max_runs: int | None = None):
             gen_result = generate_from_params(params)
 
             # Collect generation-phase structural metrics for the generation graphs.
+            _c_vals = list(gen_result.get("complexity", {}).values())
             all_gen_stats.append({
                 **tag,
-                "n_raw":        sum(1 for c in gen_result["components"] if c.level == 0),
-                "n_components": sum(1 for c in gen_result["components"] if c.level > 0),
-                "n_configs":    len(gen_result["configurations"]),
-                "n_edges":      len(gen_result["layout_edges"]),
+                "n_raw":           sum(1 for c in gen_result["components"] if c.level == 0),
+                "n_components":    sum(1 for c in gen_result["components"] if c.level > 0),
+                "n_configs":       len(gen_result["configurations"]),
+                "n_edges":         len(gen_result["layout_edges"]),
+                "mean_complexity": round(sum(_c_vals) / len(_c_vals), 2) if _c_vals else 0,
+                "max_complexity":  max(_c_vals) if _c_vals else 0,
             })
 
             sim_result = simulate(

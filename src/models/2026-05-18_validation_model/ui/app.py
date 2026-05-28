@@ -32,7 +32,7 @@ _NAV = [
     ("/generate",     "Generate",     "nl-generate",     "Engine"),
     ("/simulate",     "Simulate",     "nl-simulate",     "Engine"),
     ("/sweep",        "Sweep",        "nl-sweep",        "Analyse"),
-    ("/validate",     "Validate",     "nl-validate",     "Analyse"),
+    ("/verify",       "Verify",       "nl-verify",       "Analyse"),
     ("/availability", "Availability", "nl-availability", "Analyse"),
 ]
 
