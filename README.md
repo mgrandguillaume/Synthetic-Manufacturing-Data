@@ -94,13 +94,17 @@ src/
     │   ├── simulate/
     │   └── sweep/
     │
-    └── 2026-05-18_validation_model/   # Validation suite
+    └── 2026-05-18_validation_model/   # Verification suite + Dash UI
         ├── config.yaml
-        ├── run.py
-        ├── generate/
-        ├── simulate/
-        ├── sweep/
-        └── validate/
+        ├── engine/
+        │   ├── generate/              # BOM + factory builder
+        │   └── simulate/              # Numba tick loop
+        ├── analysis/
+        │   ├── model_verification/    # Conservation, boundary, monotonicity, statistical checks
+        │   ├── sweep/                 # Parameter sweep runner
+        │   └── use_cases/             # Availability analysis
+        ├── ui/                        # Dash multi-page web app
+        └── shared_utils/
 ```
 
 ---
@@ -115,7 +119,7 @@ src/
 | 2026-04-29 | `alpha_model` | Replaces the binary parallel/linear topology with a continuous **α parameter** (α = depth / workstation count) that produces a spectrum of stage-based layouts between fully parallel and fully serial. |
 | 2026-05-13 | `optimized_model` | Performance rewrite using **NumPy vectorization** and **Numba JIT compilation** (@njit). Enables large-scale sweeps that would be too slow in pure Python. |
 | 2026-05-15 | `failure_rate` | Adds a **Weibull failure model** with shape and scale parameters, replacing the simple Bernoulli trial. Machines now have age-dependent failure probabilities and explicit repair/downtime cycles. |
-| 2026-05-18 | `validation_model` | Adds a dedicated **validation suite** with four test categories: conservation checks (units in = units out), boundary condition tests (zero machines, zero ticks), monotonicity tests (more machines → more throughput), and statistical distribution checks. |
+| 2026-05-18 | `validation_model` | Adds a dedicated **verification suite** with four test categories (conservation, boundary, monotonicity, statistical), a **complexity metric C** (distinct non-raw component types reachable from each product in the BOM), and a **Dash multi-page web UI** for running generate / simulate / sweep / verify interactively in the browser. |
 
 ---
 
@@ -166,15 +170,3 @@ Requires a Julia installation. No additional packages beyond the standard librar
 ```bash
 julia src/models/2026-04-27_rafael_model/generate.jl
 ```
-
-# Model wide bugs found
-
-## Generation
-- Fewer workstations than depth can be assigned (NOT FIXED!)
-- Some workstations are not assigned any component to work on (MODELS FIXED: 05/18 VALIDATION)
-- All workstations from level x connect to all workstations from level x + 1. This should be specific to what product is made (NOT FIXED)
-
-## Generation Visualization
-- Layout dept was not visualized correctly: all workstations were stacked vertically (MODELS FIXED: 05/18 VALIDATION)
-
-
