@@ -31,18 +31,29 @@ The original implementation can be found
 
 ### This Project
 
-This project extends the CLEMATIS framework in two key ways. First,
-it moves from a topology-driven to a **product-driven** approach,
+This project extends the CLEMATIS framework in three key ways.
+
+First, it moves from a topology-driven to a **product-driven** approach,
 where the factory layout and machine configurations are derived from
-the requirements of a defined product or product family. Second, it
-introduces **heterogeneous machine parameters** drawn from realistic
-probability distributions, replacing the assumption that all machines
-in the network are identical.
+the requirements of a defined product or product family expressed as a
+Bill of Materials (BOM).
+
+Second, it introduces **heterogeneous machine parameters** drawn from
+realistic probability distributions — including Weibull failure models
+with age-dependent failure probabilities — replacing the assumption that
+all machines in the network are identical.
+
+Third, it adds a **verification suite** that checks conservation laws,
+boundary conditions, monotonicity, and statistical properties of the
+simulator, and a **complexity metric C** (number of distinct non-raw
+component types reachable from each product in the BOM) to characterise
+structural diversity across generated factories.
 
 The goal is to produce synthetic factory data that is more
 representative of the diversity of real manufacturing systems,
 and more useful for researchers benchmarking optimization and
-simulation models.
+simulation models. The latest model ships a Dash web UI that lets users
+configure, run, and analyse all of the above interactively in a browser.
 
 ---
 
@@ -125,7 +136,25 @@ src/
 
 ## How to Run
 
-Each model is self-contained. Navigate to the model directory and run `run.py` — it generates factory data, runs the simulation, writes output CSVs, and opens visualizations.
+### Latest model — Dash web UI (recommended)
+
+The current model (`2026-05-18_validation_model`) ships a multi-page
+Dash web app as its primary interface. Launch it from the model root:
+
+```bash
+cd src/models/2026-05-18_validation_model
+uv run ui/app.py
+```
+
+Then open **http://127.0.0.1:8050** in your browser. The sidebar
+groups pages into **Engine** (Generate, Simulate), **Analyse**
+(Sweep, Verify, Availability), and **Configure** (live config editor).
+
+### Earlier models — command-line
+
+Each earlier model is self-contained. Navigate to the model directory
+and run `run.py` — it generates factory data, runs the simulation,
+writes output CSVs, and opens visualizations.
 
 ```bash
 # Example: run the alpha model
@@ -154,6 +183,8 @@ Managed via `pyproject.toml` and a `.venv` created by [uv](https://github.com/as
 | `numba` | JIT compilation for the optimized and later models |
 | `pandas` | CSV I/O and data manipulation |
 | `plotly` | Interactive visualizations |
+| `dash` | Multi-page web UI (latest model only) |
+| `pyvis` | Network graph rendering in the browser |
 | `pyyaml` | Config file parsing |
 | `python-igraph` | Graph structure required by the CLEMATIS simulator |
 
