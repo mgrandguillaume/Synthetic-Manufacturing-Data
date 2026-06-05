@@ -34,8 +34,10 @@ System availability — exact vs naive
     • Weight each state by its probability  A_ws^(#up) * (1-A_ws)^(#down).
     • Sum over all system-available states.
 
-  For n_ws ≤ 25 this runs in well under a second.  For larger factories a
-  fallback Monte Carlo estimate is used instead (see _sys_avail_large).
+  The enumeration is implemented (and vectorised) in _rbd.sys_avail_exact.
+  For n_ws ≤ _rbd.EXACT_THRESHOLD (22 by default, ~4.2 M states) it runs in
+  well under a second; for larger factories _rbd.sys_avail_mc provides a
+  Monte Carlo fallback.
 
 Workstation availability
 ------------------------
@@ -64,11 +66,7 @@ Note on approximation
 import math
 from collections import defaultdict
 
-
-# Maximum number of workstations for exact enumeration (2^N states).
-# For N=25 this is ~33 M iterations — feasible but slow.  Above this threshold
-# a Monte Carlo fallback is used.
-_EXACT_THRESHOLD = 22   # 2^22 = ~4 M, comfortably fast
+from . import _rbd
 
 
 def compute(gen_result: dict, failure_cfg: dict) -> dict:
@@ -152,7 +150,7 @@ def compute(gen_result: dict, failure_cfg: dict) -> dict:
                 "beta_rep":        beta_rep,
                 "lambda_rep":      lambda_rep,
                 "bottlenecks":     [(comp.id, 0.0)],
-                "method":          "n/a (unprocducible component)",
+                "method":          "n/a (unproducible component)",
             }
         comp_capable.append([ws_to_idx[ws] for ws in capable_ws
                               if ws in ws_to_idx])
@@ -165,10 +163,12 @@ def compute(gen_result: dict, failure_cfg: dict) -> dict:
         sum(1 << idx for idx in cap) for cap in comp_capable
     ]
 
-    if n_ws <= _EXACT_THRESHOLD:
-        A_sys, method = _sys_avail_exact(n_ws, comp_masks, A_ws)
+    if n_ws <= _rbd.EXACT_THRESHOLD:
+        A_sys  = _rbd.sys_avail_exact(n_ws, comp_masks, A_ws)
+        method = "exact"
     else:
-        A_sys, method = _sys_avail_mc(n_ws, comp_masks, A_ws, n_samples=500_000)
+        A_sys  = _rbd.sys_avail_mc(n_ws, comp_masks, A_ws)
+        method = "monte_carlo"
 
     # ── Identify bottlenecks ──────────────────────────────────────────────────
     bottlenecks = sorted(A_per_comp.items(), key=lambda kv: kv[1])
@@ -184,77 +184,3 @@ def compute(gen_result: dict, failure_cfg: dict) -> dict:
         "bottlenecks":     bottlenecks,
         "method":          method,
     }
-
-
-# ── System availability helpers ───────────────────────────────────────────────
-
-def _sys_avail_exact(n_ws: int, comp_masks: list[int], A_ws: float) -> tuple[float, str]:
-    """
-    Exact system availability by exhaustive workstation-state enumeration.
-
-    Iterates over all 2^n_ws combinations of workstation up/down states,
-    computes the probability of each state, and sums over states in which
-    every component has at least one capable workstation that is up.
-
-    Parameters
-    ----------
-    n_ws:
-        Number of production workstations.
-    comp_masks:
-        List of bitmasks.  comp_masks[i] has bit k set iff workstation k can
-        produce component i.
-    A_ws:
-        Per-workstation steady-state availability (same for all workstations).
-
-    Returns
-    -------
-    (A_sys, method_label)
-    """
-    q   = 1.0 - A_ws
-    total_states = 1 << n_ws
-
-    # Pre-compute powers of A_ws and q to avoid repeated **-operations.
-    pow_A = [A_ws ** k for k in range(n_ws + 1)]
-    pow_q = [q        ** k for k in range(n_ws + 1)]
-
-    A_sys = 0.0
-    for state in range(total_states):
-        # Number of workstations that are UP in this state.
-        n_up = bin(state).count("1")
-        p    = pow_A[n_up] * pow_q[n_ws - n_up]
-
-        # System is available iff every component has at least one capable
-        # workstation that is up: (state & comp_mask) != 0 for all components.
-        if all((state & m) for m in comp_masks):
-            A_sys += p
-
-    return A_sys, "exact"
-
-
-def _sys_avail_mc(
-    n_ws: int,
-    comp_masks: list[int],
-    A_ws: float,
-    n_samples: int = 500_000,
-    seed: int = 0,
-) -> tuple[float, str]:
-    """
-    Monte Carlo estimate of system availability (fallback for large factories).
-
-    Draws random workstation up/down states and checks availability.
-    """
-    import random
-    rng = random.Random(seed)
-
-    up_count = 0
-    for _ in range(n_samples):
-        # Build random state: each workstation independently up with prob A_ws.
-        state = sum(
-            (1 << k)
-            for k in range(n_ws)
-            if rng.random() < A_ws
-        )
-        if all((state & m) for m in comp_masks):
-            up_count += 1
-
-    return up_count / n_samples, f"monte_carlo_{n_samples}"

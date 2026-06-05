@@ -48,12 +48,11 @@ from collections import defaultdict
 
 import numpy as np
 
+from . import _rbd
+
 # Grid resolution for the 2-D numerical integration over (beta, lambda).
 # 500x500 = 250 000 evaluations — runs in well under a second.
 GRID_N = 500
-
-# Maximum workstations for exact state enumeration (same cap as theoretical.py).
-_EXACT_THRESHOLD = 22
 
 
 def compute(gen_result: dict, failure_cfg: dict) -> dict:
@@ -132,10 +131,10 @@ def compute(gen_result: dict, failure_cfg: dict) -> dict:
         comp_masks.append(sum(1 << ws_to_idx[ws] for ws in capable_ws
                               if ws in ws_to_idx))
 
-    if n_ws <= _EXACT_THRESHOLD:
-        A_sys = _sys_avail_exact(n_ws, comp_masks, E_A_ws)
+    if n_ws <= _rbd.EXACT_THRESHOLD:
+        A_sys = _rbd.sys_avail_exact(n_ws, comp_masks, E_A_ws)
     else:
-        A_sys = _sys_avail_mc(n_ws, comp_masks, E_A_ws)
+        A_sys = _rbd.sys_avail_mc(n_ws, comp_masks, E_A_ws)
 
     bottlenecks = sorted(A_per_comp.items(), key=lambda kv: kv[1])
 
@@ -190,35 +189,3 @@ def _integrate_A_ws(
 
     # Average over the uniform (beta, lambda) grid
     return float(np.mean(A_ws_grid))
-
-
-# ── System availability helpers (identical to theoretical.py) ─────────────────
-
-def _sys_avail_exact(n_ws: int, comp_masks: list[int], A_ws: float) -> float:
-    q   = 1.0 - A_ws
-    pow_A = [A_ws ** k for k in range(n_ws + 1)]
-    pow_q = [q        ** k for k in range(n_ws + 1)]
-    A_sys = 0.0
-    for state in range(1 << n_ws):
-        n_up = bin(state).count("1")
-        p    = pow_A[n_up] * pow_q[n_ws - n_up]
-        if all((state & m) for m in comp_masks):
-            A_sys += p
-    return A_sys
-
-
-def _sys_avail_mc(
-    n_ws: int,
-    comp_masks: list[int],
-    A_ws: float,
-    n_samples: int = 500_000,
-    seed: int = 0,
-) -> float:
-    import random
-    rng = random.Random(seed)
-    up_count = 0
-    for _ in range(n_samples):
-        state = sum((1 << k) for k in range(n_ws) if rng.random() < A_ws)
-        if all((state & m) for m in comp_masks):
-            up_count += 1
-    return up_count / n_samples

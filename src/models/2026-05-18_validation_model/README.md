@@ -370,7 +370,7 @@ For each producible component at BOM level *l*, the generator randomly selects b
 | Parameter | Description |
 |---|---|
 | `producers_per_component` | `[min, max]` — how many workstations can produce each component; clamped to the stage size |
-| `assembly_type` | `"low"`, `"medium"`, or `"high"` — sets the (α, β) coefficients for the processing-time formula (see below). Mutually exclusive with `processing_time`. |
+| `assembly_type` | `"low"`, `"medium"`, or `"high"` — sets the (a, b) coefficients for the processing-time formula (see below). Mutually exclusive with `processing_time`. |
 | `variation` | Fractional spread around the formula value, e.g. `0.10` for ±10 %. Each (workstation, component) pair is sampled independently within this band. Default: `0.10`. |
 | `processing_time` | `[min, max]` hours — legacy explicit range. Used only when `assembly_type` is absent. |
 | `setup_time` | `[min, max]` hours — changeover time when switching to this component; sampled per pair |
@@ -379,21 +379,21 @@ For each producible component at BOM level *l*, the generator randomly selects b
 
 **Processing-time formula**
 
-When `assembly_type` is set, processing time is derived from the BOM depth using an exponential approximation:
+When `assembly_type` is set, processing time scales with the product complexity C using an exponential approximation. C grows monotonically with BOM depth for a fixed branching factor, and BOM depth is used as a proxy for C in the implementation:
 
 ```
-processing_time = α · depth^β   ±  variation
+processing_time = a · C^b   ±  variation
 ```
 
-`depth` is the same value used for BOM construction, so deeper factories automatically produce components that take longer to assemble. The (α, β) coefficients by assembly type are:
+Products with higher C — more distinct intermediate component types to coordinate — automatically produce components that take longer to assemble. The (a, b) coefficients by assembly type are:
 
-| `assembly_type` | α | β |
+| `assembly_type` | a | b |
 |---|---|---|
 | `low` | 0.33 | 1.39 |
 | `medium` | 0.28 | 1.45 |
 | `high` | 0.12 | 1.79 |
 
-For example, with `assembly_type: medium`, `depth: 5`, and `variation: 0.10`:
+For example, with `assembly_type: medium`, `depth: 5` (C ≈ depth for unit branching), and `variation: 0.10`:
 
 ```
 pt_mean = 0.28 × 5^1.45 ≈ 2.89 h

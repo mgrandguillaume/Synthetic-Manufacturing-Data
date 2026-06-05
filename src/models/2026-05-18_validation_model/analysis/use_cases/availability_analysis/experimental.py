@@ -26,6 +26,12 @@ boolean matrices rather than per-point Python loops:
   comp_down[tk]  = all(ws_failed_matrix[capable_ws, tk])
   system_up[tk]  = not any(comp_down[tk] for any component)
 
+  The grid spacing must be smaller than the shortest possible repair, or brief
+  outages can fall entirely between two grid points and availability is
+  over-estimated.  The caller (availability.py) sizes n_timepoints from the
+  minimum configured MTTR to guarantee this; pass a sufficiently large
+  n_timepoints if calling run() directly.
+
 Warm-up
 -------
 The first `warmup_hours` of each replication are discarded to avoid measuring

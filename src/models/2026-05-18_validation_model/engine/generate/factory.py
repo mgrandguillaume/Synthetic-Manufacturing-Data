@@ -35,9 +35,12 @@ from .models import (
 
 # ── Assembly-type processing-time formula ──────────────────────────────────────
 #
-#   processing_time = α · depth^β   (exponential approximation)
+#   processing_time = a · C^b   (exponential approximation)
 #
-#   assembly_type   α       β
+#   C (product complexity) grows monotonically with BOM depth for a fixed
+#   branching factor; depth is used as a proxy for C in the implementation.
+#
+#   assembly_type   a       b
 #   low             0.33    1.39
 #   medium          0.28    1.45
 #   high            0.12    1.79
@@ -56,16 +59,19 @@ def _pt_range(assembly_type: str, depth: int, variation: float) -> list[float]:
     """
     Return a [min, max] processing-time range from the assembly formula.
 
-    processing_time = α · depth^β  ±  variation fraction
+    processing_time = a · C^b  ±  variation fraction
+
+    C (product complexity) grows monotonically with BOM depth for a fixed
+    branching factor; depth is used here as a proxy for C.
 
     Parameters
     ----------
     assembly_type : "low" | "medium" | "high"
-    depth         : BOM depth
+    depth         : BOM depth (proxy for product complexity C)
     variation     : fractional spread, e.g. 0.10 for ±10 %
     """
-    alpha, beta = _ASSEMBLY_PARAMS[assembly_type]
-    pt_mean = alpha * (depth ** beta)
+    a, b = _ASSEMBLY_PARAMS[assembly_type]
+    pt_mean = a * (depth ** b)
     return [pt_mean * (1.0 - variation), pt_mean * (1.0 + variation)]
 
 

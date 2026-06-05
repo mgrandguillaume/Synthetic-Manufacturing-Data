@@ -49,10 +49,23 @@ _CONFIG_PATH = os.path.join(_MODEL_ROOT, "config.yaml")
 # Monte Carlo settings — increase n_replications for a tighter CI at the
 # cost of longer runtime (~1 min for 200 reps on a typical laptop).
 N_REPLICATIONS = 1000
-HORIZON_HOURS  = 2_000.0   # must be >> MTTF so many cycles are observed
-WARMUP_HOURS   = 200.0     # discarded transient (≈ 3-4x expected MTTF)
-N_TIMEPOINTS   = 5_000     # evaluation points per replication
 SEED           = 42
+
+# The simulation horizon and warm-up are scaled to the workstation MTTF rather
+# than hardcoded.  A fixed 2000 h horizon is meaningless across configs: it is
+# far too short for a 1500 h MTTF (too few failure-repair cycles observed) and
+# wastefully long for a 50 h one.  Scaling keeps the estimate well-conditioned
+# regardless of the configured Weibull parameters.
+WARMUP_MTTF_MULT  = 4.0    # discard the first ~4x MTTF as start-up transient
+HORIZON_MTTF_MULT = 50.0   # then measure ~50 failure-repair cycles
+
+# Time-grid resolution.  The grid must be fine enough to resolve the SHORTEST
+# possible repair, otherwise brief outages can fall entirely between two grid
+# points and system availability is silently over-estimated.  We require at
+# least this many grid points within one minimum-MTTR window, subject to a
+# floor so short horizons still get a smooth estimate.
+POINTS_PER_MIN_MTTR = 5
+N_TIMEPOINTS_FLOOR  = 5_000
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -108,18 +121,32 @@ def run() -> None:
     print("Computing theoretical availability (integrated)...")
     theo_int = theoretical_integrated.compute(gen_result, fail_cfg)
 
+    # ── Scale the simulation horizon to the MTTF (fix: no hardcoded horizon) ──
+    mttf_h        = theo_mid["MTTF_h"]
+    mttr_min      = float(fail_cfg["mttr"][0])
+    warmup_hours  = WARMUP_MTTF_MULT * mttf_h
+    horizon_hours = warmup_hours + HORIZON_MTTF_MULT * mttf_h
+
+    # Resolve the grid finely enough to capture the shortest possible repair.
+    span         = horizon_hours - warmup_hours
+    n_timepoints = max(
+        N_TIMEPOINTS_FLOOR,
+        int(math.ceil(span / (mttr_min / POINTS_PER_MIN_MTTR))) + 1,
+    )
+
     # ── Experimental ─────────────────────────────────────────────────────────
     print(
         f"Running Monte Carlo ({N_REPLICATIONS} replications x "
-        f"{HORIZON_HOURS:.0f} h, warm-up {WARMUP_HOURS:.0f} h)..."
+        f"{horizon_hours:.0f} h, warm-up {warmup_hours:.0f} h, "
+        f"{n_timepoints} grid points)..."
     )
     exp = experimental.run(
         gen_result,
         fail_cfg,
         n_replications = N_REPLICATIONS,
-        horizon_hours  = HORIZON_HOURS,
-        warmup_hours   = WARMUP_HOURS,
-        n_timepoints   = N_TIMEPOINTS,
+        horizon_hours  = horizon_hours,
+        warmup_hours   = warmup_hours,
+        n_timepoints   = n_timepoints,
         seed           = SEED,
     )
     print("  Done.")
@@ -328,7 +355,7 @@ def _show_plots(theo_mid: dict, theo_int: dict, exp: dict, gen_result: dict,
         hovertemplate="t = %{x:.1f} h<br>%{y:.0f} (1=up, 0=down)<extra></extra>",
     ), row=2, col=2)
 
-    window = max(1, N_TIMEPOINTS // 100)
+    window = max(1, len(time_grid) // 100)
     rolling_avail = np.convolve(
         system_up.astype(float),
         np.ones(window) / window,
