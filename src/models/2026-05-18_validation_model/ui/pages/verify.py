@@ -36,16 +36,34 @@ def _read_report() -> list:
 
 
 def _charts() -> list:
-    """Return chart children; generates data if CSVs are missing."""
+    """Return chart children; generates diagnostic data if CSVs are missing."""
     verify_csvs = [os.path.join(_VERIFY_DIR, f)
                    for f in ["val_orders.csv", "val_buffers.csv", "val_availability.csv"]]
     if not all(os.path.exists(p) for p in verify_csvs):
         from analysis.model_verification.visualize_verification import generate_data
         generate_data(_VERIFY_DIR)
 
-    from analysis.model_verification.visualize_verification import show as verify_show
-    fig = verify_show(_VERIFY_DIR)
-    return [html.H2("Diagnostic charts"), dcc.Graph(figure=fig)]
+    from analysis.model_verification.visualize_verification import (
+        show as verify_show,
+        plot_monotonicity,
+    )
+
+    children = [html.H2("Diagnostic charts"), dcc.Graph(figure=verify_show(_VERIFY_DIR))]
+
+    mono_path = os.path.join(_VERIFY_DIR, "val_monotonicity.csv")
+    if os.path.exists(mono_path):
+        children += [
+            html.H2("Monotonicity tests"),
+            html.P(
+                "Each chart shows how one output metric responds to a controlled "
+                "increase in one input parameter. A ✓ (green) means the trend matches "
+                "the expected direction; ✗ (red) means it does not.",
+                className="page-caption",
+            ),
+            dcc.Graph(figure=plot_monotonicity(_VERIFY_DIR)),
+        ]
+
+    return children
 
 
 def layout():

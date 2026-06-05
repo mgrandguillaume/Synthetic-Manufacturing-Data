@@ -30,7 +30,7 @@ def _metric(label, value):
 
 
 def _build_figures(results: dict) -> dict:
-    """Build all four Plotly figures from simulation result DataFrames.
+    """Build all five Plotly figures from simulation result DataFrames.
 
     Heavy function — only called once after a fresh simulation run.
     Returns a dict of serialised figure dicts (via .to_dict()) so they can
@@ -38,8 +38,9 @@ def _build_figures(results: dict) -> dict:
     """
     from shared_utils import theme
 
-    tp   = results["throughput"]
-    util = results["utilization"]
+    tp     = results["throughput"]
+    util   = results["utilization"]
+    states = results["states"]
 
     STATE_COLS  = ["BusyPct","SetupPct","BlockedPct","StarvedPct","IdlePct","FailedPct"]
     STATE_NAMES = ["Processing","Setup","Blocked","Starved","Idle","Failed"]
@@ -167,11 +168,85 @@ def _build_figures(results: dict) -> dict:
         theme.apply_axis_style(fig_b)
         fig_b_dict = fig_b.to_dict()
 
+    # Machine state % over ticks ──────────────────────────────────────────────
+    # Aggregate: what fraction of all workstations are in each state, per tick?
+    # This is the CLEMATIS-style factory-wide dynamics chart from visualize_sim.py.
+    #
+    # Performance notes:
+    #   - groupby on a Categorical "State" column is fast even for large DataFrames.
+    #   - We downsample to at most _MS_MAX_PTS ticks so Scattergl stays smooth.
+    #   - Rolling average uses pandas on the downsampled series (cheap).
+    _MS_MAX_PTS = 2_000
+    SMOOTH      = 20   # rolling window in ticks (applied after downsampling)
+
+    MS_STATES = [
+        ("processing", theme.STATE_COLORS["processing"], "Working"),
+        ("blocked",    theme.STATE_COLORS["blocked"],    "Blocked"),
+        ("starved",    theme.STATE_COLORS["starved"],    "Starved"),
+        ("failed",     theme.STATE_COLORS["failed"],     "Failed"),
+    ]
+
+    total_ws  = states["Workstation"].nunique()
+    state_pct = (
+        states.groupby(["Tick", "State"], observed=True)
+        .size()
+        .unstack(fill_value=0)
+        .div(total_ws)
+        .mul(100)
+    )
+
+    # Stride-downsample so each trace stays below _MS_MAX_PTS points.
+    n_ticks_ms = len(state_pct)
+    step_ms    = max(1, n_ticks_ms // _MS_MAX_PTS)
+    sp_ds      = state_pct.iloc[::step_ms]
+
+    fig_ms = go.Figure()
+    for state_key, color, label in MS_STATES:
+        if state_key not in sp_ds.columns:
+            continue
+        raw      = sp_ds[state_key]
+        smoothed = raw.rolling(window=SMOOTH, min_periods=1).mean()
+        ticks    = sp_ds.index.to_numpy()
+
+        # Faint raw line
+        fig_ms.add_trace(go.Scattergl(
+            x=ticks, y=raw.to_numpy(),
+            mode="lines",
+            line=dict(color=color, width=0.75),
+            opacity=0.20,
+            showlegend=False,
+            hoverinfo="skip",
+        ))
+        # Bold rolling-average line
+        fig_ms.add_trace(go.Scattergl(
+            x=ticks, y=smoothed.to_numpy(),
+            mode="lines",
+            name=label,
+            line=dict(color=color, width=2.5),
+            hovertemplate=(
+                f"<b>{label}</b><br>"
+                "Tick: %{x}<br>%{y:.1f}% of machines<extra></extra>"
+            ),
+        ))
+
+    fig_ms.update_layout(
+        height=380,
+        paper_bgcolor=theme.BG, plot_bgcolor=theme.BG,
+        font=dict(color=theme.TEXT, family="IBM Plex Sans, system-ui, sans-serif"),
+        xaxis_title="Tick", yaxis_title="% of workstations",
+        yaxis=dict(range=[0, 100]),
+        legend=dict(bgcolor=theme.SURFACE, bordercolor=theme.BORDER, borderwidth=1,
+                    font=dict(color=theme.SUBTEXT)),
+        margin=dict(l=50, r=20, t=30, b=40),
+    )
+    theme.apply_axis_style(fig_ms)
+
     return dict(
         util=fig_u.to_dict(),
         tp=fig_tp_dict,
         cost=fig_c.to_dict(),
         buf=fig_b_dict,
+        ms=fig_ms.to_dict(),
     )
 
 
@@ -228,6 +303,8 @@ def _assemble_children(results: dict, figs: dict) -> list:
         ], className="metric-row"),
 
         dcc.Tabs([
+            dcc.Tab(label="machine states", className="tab-item", selected_className="tab-item--selected",
+                    children=[dcc.Graph(figure=go.Figure(figs["ms"]))]),
             dcc.Tab(label="utilization",  className="tab-item", selected_className="tab-item--selected",
                     children=[dcc.Graph(figure=fig_u)]),
             dcc.Tab(label="throughput",   className="tab-item", selected_className="tab-item--selected",
@@ -251,8 +328,8 @@ def _render_results(results) -> list:
         return [html.Div("Click Run simulation to start.", className="alert alert-info")]
 
     figs = store.get("sim_figures")
-    if figs is None:
-        # First time: build figures (slow for large buffer logs) and cache
+    if figs is None or "ms" not in figs:
+        # First time (or stale cache missing the machine-states figure): rebuild
         figs = _build_figures(results)
         store.set("sim_figures", figs)
 

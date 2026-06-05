@@ -12,7 +12,7 @@ Tests
    (workstations_count: 2 → 4 → 8, everything else fixed)
 
 2. Larger buffer capacity → shorter or equal makespan.
-   (buffer_capacity: 2 → 10 → 100, everything else fixed)
+   (buffer_capacity: 1 → 3 → 8, everything else fixed)
 
 3. More orders → longer makespan.
    (n_orders: 3 → 6 → 12, everything else fixed)
@@ -92,14 +92,16 @@ def _makespan(sim_result: dict) -> float:
 
 # ── Individual tests ───────────────────────────────────────────────────────────
 
-def _test_more_workstations() -> tuple[str, bool, str]:
+def _test_more_workstations() -> tuple[str, bool, str, dict]:
     """More workstations → shorter or equal makespan."""
-    ws_values  = [2, 4, 8]
+    ws_values  = [2, 3, 4]
     makespans: list[float] = []
 
     for n_ws in ws_values:
         gen    = generate_from_params(_gen(workstations_count=n_ws))
-        result = simulate(gen, **_sim())
+        # More orders keeps the factory capacity-constrained across all three
+        # workstation levels; without this ws=4 and ws=8 give the same makespan.
+        result = simulate(gen, **_sim(n_orders=20, n_ticks=8_000))
         makespans.append(_makespan(result))
 
     # Check weakly decreasing (each value ≤ previous + small tolerance).
@@ -117,12 +119,17 @@ def _test_more_workstations() -> tuple[str, bool, str]:
         if monotone else
         f"Makespan did NOT decrease consistently with more workstations. ({detail})"
     )
-    return "monotonicity_more_workstations", monotone, msg
+    plot_data = dict(
+        title="More workstations → shorter makespan",
+        x_label="Workstations", y_label="Makespan (h)",
+        x_values=ws_values, y_values=makespans, direction="decreasing",
+    )
+    return "monotonicity_more_workstations", monotone, msg, plot_data
 
 
-def _test_larger_buffer() -> tuple[str, bool, str]:
+def _test_larger_buffer() -> tuple[str, bool, str, dict]:
     """Larger buffer capacity → shorter or equal makespan."""
-    buf_values = [2, 10, 100]
+    buf_values = [1, 3, 8]
     makespans: list[float] = []
 
     gen = generate_from_params(_gen())   # factory layout is fixed
@@ -142,10 +149,15 @@ def _test_larger_buffer() -> tuple[str, bool, str]:
         if monotone else
         f"Makespan did NOT decrease consistently with larger buffer. ({detail})"
     )
-    return "monotonicity_larger_buffer", monotone, msg
+    plot_data = dict(
+        title="Larger buffer → shorter makespan",
+        x_label="Buffer capacity", y_label="Makespan (h)",
+        x_values=buf_values, y_values=makespans, direction="decreasing",
+    )
+    return "monotonicity_larger_buffer", monotone, msg, plot_data
 
 
-def _test_more_orders() -> tuple[str, bool, str]:
+def _test_more_orders() -> tuple[str, bool, str, dict]:
     """More orders → longer makespan."""
     order_values = [3, 6, 12]
     makespans: list[float] = []
@@ -167,10 +179,15 @@ def _test_more_orders() -> tuple[str, bool, str]:
         if monotone else
         f"Makespan did NOT increase consistently with more orders. ({detail})"
     )
-    return "monotonicity_more_orders", monotone, msg
+    plot_data = dict(
+        title="More orders → longer makespan",
+        x_label="Orders", y_label="Makespan (h)",
+        x_values=order_values, y_values=makespans, direction="increasing",
+    )
+    return "monotonicity_more_orders", monotone, msg, plot_data
 
 
-def _test_higher_branching_more_components() -> tuple[str, bool, str]:
+def _test_higher_branching_more_components() -> tuple[str, bool, str, dict]:
     """
     Higher branching factor → strictly more non-raw components.
 
@@ -202,21 +219,21 @@ def _test_higher_branching_more_components() -> tuple[str, bool, str]:
         f"branching={b}: {n} components"
         for b, n in zip(branching_values, counts)
     )
-    if monotone:
-        return (
-            "monotonicity_higher_branching_more_components",
-            True,
-            f"Component count strictly increases with branching — correct. ({detail})",
-        )
-    else:
-        return (
-            "monotonicity_higher_branching_more_components",
-            False,
-            f"Component count did NOT strictly increase with branching. ({detail})",
-        )
+    msg = (
+        f"Component count strictly increases with branching — correct. ({detail})"
+        if monotone else
+        f"Component count did NOT strictly increase with branching. ({detail})"
+    )
+    plot_data = dict(
+        title="Higher branching → more components",
+        x_label="Branching factor", y_label="Non-raw components",
+        x_values=branching_values, y_values=[float(c) for c in counts],
+        direction="increasing",
+    )
+    return "monotonicity_higher_branching_more_components", monotone, msg, plot_data
 
 
-def _test_higher_quantity_longer_leadtime() -> tuple[str, bool, str]:
+def _test_higher_quantity_longer_leadtime() -> tuple[str, bool, str, dict]:
     """
     Higher BOM edge quantity → strictly longer mean lead time.
 
@@ -246,21 +263,38 @@ def _test_higher_quantity_longer_leadtime() -> tuple[str, bool, str]:
     detail   = ", ".join(
         f"qty={q}: {lt:.2f} h" for q, lt in zip(qty_values, lead_times)
     )
-    if monotone:
-        return (
-            "monotonicity_higher_quantity_longer_leadtime",
-            True,
-            f"Mean lead time strictly increases with BOM quantity — correct. ({detail})",
-        )
-    else:
-        return (
-            "monotonicity_higher_quantity_longer_leadtime",
-            False,
-            f"Mean lead time did NOT strictly increase with BOM quantity. ({detail})",
-        )
+    msg = (
+        f"Mean lead time strictly increases with BOM quantity — correct. ({detail})"
+        if monotone else
+        f"Mean lead time did NOT strictly increase with BOM quantity. ({detail})"
+    )
+    plot_data = dict(
+        title="Higher BOM quantity → longer lead time",
+        x_label="BOM quantity", y_label="Mean lead time (h)",
+        x_values=qty_values, y_values=lead_times, direction="increasing",
+    )
+    return "monotonicity_higher_quantity_longer_leadtime", monotone, msg, plot_data
 
 
-# ── Public check function ──────────────────────────────────────────────────────
+# ── Public check functions ─────────────────────────────────────────────────────
+
+def check_with_data() -> list[tuple[str, bool, str, dict]]:
+    """
+    Run all monotonicity checks, returning raw plot data alongside pass/fail.
+
+    Returns
+    -------
+    list of (test_name, passed, message, plot_data)
+        plot_data keys: title, x_label, y_label, x_values, y_values, direction
+    """
+    return [
+        _test_more_workstations(),
+        _test_larger_buffer(),
+        _test_more_orders(),
+        _test_higher_branching_more_components(),
+        _test_higher_quantity_longer_leadtime(),
+    ]
+
 
 def check() -> list[tuple[str, bool, str]]:
     """
@@ -270,10 +304,4 @@ def check() -> list[tuple[str, bool, str]]:
     -------
     list of (test_name, passed, message)
     """
-    return [
-        _test_more_workstations(),
-        _test_larger_buffer(),
-        _test_more_orders(),
-        _test_higher_branching_more_components(),
-        _test_higher_quantity_longer_leadtime(),
-    ]
+    return [(name, passed, msg) for name, passed, msg, _ in check_with_data()]

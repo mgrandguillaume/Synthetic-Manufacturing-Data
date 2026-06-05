@@ -50,7 +50,7 @@ def _group_mean(df: pd.DataFrame, x_col: str, y_col: str,
 def _legend_style(x: float, y: float, title: str) -> dict:
     """Return a positioned legend dict using the shared theme colours."""
     return dict(
-        x=x, y=y, xanchor="right", yanchor="top",
+        x=x, y=y, xanchor="left", yanchor="top",
         bgcolor=theme.SURFACE, bordercolor=theme.BORDER, borderwidth=1,
         font=dict(color=theme.SUBTEXT, size=10),
         title=dict(text=f"<b>{title}</b>", font=dict(color=theme.SUBTEXT, size=10)),
@@ -203,21 +203,28 @@ def show(sweep_dir: str = _DEFAULT_SWEEP_DIR) -> None:
     # state_mean_tick is already computed by _load_state_mean() above.
 
     # ── Legend positions ───────────────────────────────────────────────────────
-    # 5 rows × 2 cols, vertical_spacing=0.10
-    # subplot_height = (1 - 4*0.10) / 5 = 0.12
+    # 5 rows × 2 cols, vertical_spacing=0.10, horizontal_spacing=0.22
+    # subplot_height  = (1 - 4*0.10) / 5 ≈ 0.12
+    # subplot_width   = (1 - 0.22)   / 2 = 0.39
+    # Col 1 x-range:  [0.00, 0.39]
+    # Inter-col gap:  [0.39, 0.61]   ← col 1 legends live here (~175 px at 800 px width)
+    # Col 2 x-range:  [0.61, 1.00]
     # Row tops (paper y): 1.00, 0.78, 0.56, 0.34, 0.12
-    # Col right edges:    col1≈0.44, col2≈0.99
+    #
+    # Col 1 legends → x=0.40, xanchor="left"  (just past col 1 right edge)
+    # Col 2 legends → x=1.01, xanchor="left"  (just past col 2 right edge)
+    # r=160 px gives room for the col-2 legend boxes.
     _L = {
-        "legend":   _legend_style(0.44, 0.97, "products"),   # row 1, col 1
-        "legend2":  _legend_style(0.99, 0.97, "depth"),      # row 1, col 2
-        "legend3":  _legend_style(0.44, 0.75, "products"),   # row 2, col 1
-        "legend4":  _legend_style(0.99, 0.75, "depth"),      # row 2, col 2
-        "legend5":  _legend_style(0.44, 0.53, "products"),   # row 3, col 1
-        "legend6":  _legend_style(0.99, 0.53, "depth"),      # row 3, col 2
-        "legend7":  _legend_style(0.44, 0.31, "cost type"),  # row 4, col 1
-        "legend8":  _legend_style(0.99, 0.31, "depth"),      # row 4, col 2
-        "legend9":  _legend_style(0.44, 0.09, "state"),      # row 5, col 1
-        "legend10": _legend_style(0.99, 0.09, "depth"),      # row 5, col 2
+        "legend":   _legend_style(0.40, 0.97, "products"),  # row 1, col 1
+        "legend2":  _legend_style(1.01, 0.97, "depth"),     # row 1, col 2
+        "legend3":  _legend_style(0.40, 0.75, "products"),  # row 2, col 1
+        "legend4":  _legend_style(1.01, 0.75, "depth"),     # row 2, col 2
+        "legend5":  _legend_style(0.40, 0.53, "products"),  # row 3, col 1
+        "legend6":  _legend_style(1.01, 0.53, "depth"),     # row 3, col 2
+        "legend7":  _legend_style(0.40, 0.31, "cost type"), # row 4, col 1
+        "legend8":  _legend_style(1.01, 0.31, "depth"),     # row 4, col 2
+        "legend9":  _legend_style(0.40, 0.09, "state"),     # row 5, col 1
+        "legend10": _legend_style(1.01, 0.09, "depth"),     # row 5, col 2
     }
 
     # ── Build subplots ─────────────────────────────────────────────────────────
@@ -242,7 +249,7 @@ def show(sweep_dir: str = _DEFAULT_SWEEP_DIR) -> None:
         ],
         specs=[[{}, {}]] * 5,
         vertical_spacing=0.10,
-        horizontal_spacing=0.10,
+        horizontal_spacing=0.22,
     )
 
     # ── Section header annotations ─────────────────────────────────────────────
@@ -383,7 +390,7 @@ def show(sweep_dir: str = _DEFAULT_SWEEP_DIR) -> None:
             x=0.02, y=0.99,
         ),
         height=1700,
-        margin=dict(l=60, r=40, t=120, b=40),
+        margin=dict(l=60, r=160, t=120, b=40),
         **{"legend" + ("" if k == 0 else str(k + 1)): v
            for k, v in enumerate(_L.values())},
     )

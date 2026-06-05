@@ -57,7 +57,7 @@ failures:
   - 500.0
 sweep:
   depth:
-    max: 8
+    max: 5
     min: 1
     step: 1
   n_products: 5

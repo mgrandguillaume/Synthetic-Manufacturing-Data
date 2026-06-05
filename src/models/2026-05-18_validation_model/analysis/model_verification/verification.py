@@ -20,6 +20,8 @@ import os
 import sys
 import time
 
+import pandas as pd
+
 # ── Path setup ─────────────────────────────────────────────────────────────────
 _MODEL_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
 sys.path.insert(0, _MODEL_ROOT)
@@ -46,6 +48,31 @@ def _fmt(results: list[tuple[str, bool, str]]) -> list[str]:
         lines.append(f"  [{label}]  {name}")
         lines.append(f"         {msg}")
     return lines
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _save_monotonicity_csv(
+    results_with_data: list[tuple[str, bool, str, dict]],
+    output_dir: str,
+) -> None:
+    """Flatten monotonicity plot_data into a tidy CSV for the UI chart."""
+    rows = []
+    for name, passed, _msg, plot_data in results_with_data:
+        for x, y in zip(plot_data["x_values"], plot_data["y_values"]):
+            rows.append({
+                "test_name": name,
+                "title":     plot_data["title"],
+                "x_label":   plot_data["x_label"],
+                "y_label":   plot_data["y_label"],
+                "x_value":   x,
+                "y_value":   y,
+                "direction": plot_data["direction"],
+                "passed":    passed,
+            })
+    pd.DataFrame(rows).to_csv(
+        os.path.join(output_dir, "val_monotonicity.csv"), index=False
+    )
 
 
 # ── Public run_all function ────────────────────────────────────────────────────
@@ -124,7 +151,9 @@ def run_all(
     lines.append("")
     t0 = time.perf_counter()
     try:
-        results = monotonicity.check()
+        mono_with_data = monotonicity.check_with_data()
+        results        = [(n, p, m) for n, p, m, _ in mono_with_data]
+        _save_monotonicity_csv(mono_with_data, report_dir)
     except Exception as exc:
         results = [("monotonicity_error", False, f"Exception: {exc}")]
     dt = time.perf_counter() - t0

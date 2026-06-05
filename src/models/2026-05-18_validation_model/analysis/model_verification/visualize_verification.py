@@ -261,6 +261,116 @@ def show(output_dir: str = _DEFAULT_OUTPUT_DIR) -> None:
     return fig
 
 
+# ── Monotonicity chart ────────────────────────────────────────────────────────
+
+def plot_monotonicity(output_dir: str = _DEFAULT_OUTPUT_DIR):
+    """
+    Build and return a figure showing all five monotonicity test results.
+
+    Each subplot shows the three measured values for one test, coloured
+    green (pass) or red (fail), with the expected trend direction annotated.
+
+    Reads val_monotonicity.csv written by verification.run_all().
+    """
+    path = os.path.join(output_dir, "val_monotonicity.csv")
+    df   = pd.read_csv(path)
+
+    # Preserve the order tests were run, not alphabetical.
+    ordered_tests = list(dict.fromkeys(df["test_name"].tolist()))
+
+    COL_PASS = theme.STATE_COLORS["processing"]   # green/blue — expected
+    COL_FAIL = theme.STATE_COLORS["failed"]        # red — unexpected
+
+    ARROW = {"increasing": "↑ expected", "decreasing": "↓ expected"}
+
+    # Layout: 2 rows × 3 cols; tests 1-3 in row 1, tests 4-5 in row 2
+    positions  = [(1, 1), (1, 2), (1, 3), (2, 1), (2, 2)]
+    titles     = []
+    for name in ordered_tests:
+        sub    = df[df["test_name"] == name]
+        passed = bool(sub["passed"].iloc[0])
+        prefix = "✓" if passed else "✗"
+        titles.append(f"{prefix}  {sub['title'].iloc[0]}")
+    # pad to 6 entries (last cell empty)
+    titles += [""] * (6 - len(titles))
+
+    fig = make_subplots(
+        rows=2, cols=3,
+        subplot_titles=titles,
+        vertical_spacing=0.18,
+        horizontal_spacing=0.10,
+    )
+
+    for i, name in enumerate(ordered_tests):
+        row, col = positions[i]
+        sub      = df[df["test_name"] == name].sort_values("x_value")
+        passed   = bool(sub["passed"].iloc[0])
+        color    = COL_PASS if passed else COL_FAIL
+        x_vals   = sub["x_value"].tolist()
+        y_vals   = sub["y_value"].tolist()
+        x_label  = sub["x_label"].iloc[0]
+        y_label  = sub["y_label"].iloc[0]
+        direction = sub["direction"].iloc[0]
+
+        # Line connecting the three data points
+        fig.add_trace(go.Scatter(
+            x=x_vals, y=y_vals,
+            mode="lines+markers",
+            line=dict(color=color, width=2.5),
+            marker=dict(size=10, color=color,
+                        line=dict(color=theme.BG, width=1.5)),
+            showlegend=False,
+            hovertemplate=(
+                f"{x_label}: %{{x}}<br>{y_label}: %{{y:.3f}}<extra></extra>"
+            ),
+        ), row=row, col=col)
+
+        # Annotate expected direction in the top-right corner of the subplot.
+        # Plotly names the first axis "x"/"y" (no number suffix), subsequent
+        # ones "x2"/"y2", "x3"/"y3", etc.
+        n       = i + 1
+        x_ax    = "x" if n == 1 else f"x{n}"
+        y_ax    = "y" if n == 1 else f"y{n}"
+        fig.add_annotation(
+            xref=f"{x_ax} domain", yref=f"{y_ax} domain",
+            x=0.98, y=0.96,
+            text=ARROW.get(direction, ""),
+            showarrow=False,
+            font=dict(color=theme.SUBTEXT, size=10),
+            xanchor="right", yanchor="top",
+        )
+
+        fig.update_xaxes(
+            title_text=x_label,
+            title_font=dict(color=theme.SUBTEXT),
+            tickvals=x_vals,
+            row=row, col=col,
+        )
+        fig.update_yaxes(
+            title_text=y_label,
+            title_font=dict(color=theme.SUBTEXT),
+            row=row, col=col,
+        )
+
+    fig.update_layout(
+        paper_bgcolor=theme.BG,
+        plot_bgcolor=theme.BG,
+        font=dict(color=theme.TEXT, family="Inter, system-ui, sans-serif", size=12),
+        height=550,
+        margin=dict(l=60, r=40, t=60, b=40),
+    )
+
+    for ann in fig.layout.annotations:
+        if ann.text and ann.text[:1] in ("✓", "✗"):
+            ann.update(font=dict(
+                color=COL_PASS if ann.text[:1] == "✓" else COL_FAIL,
+                size=12,
+            ))
+
+    theme.apply_axis_style(fig)
+    return fig
+
+
 # ── Standalone entry point ─────────────────────────────────────────────────────
 
 if __name__ == "__main__":
