@@ -146,7 +146,7 @@ def _export_verification(static: bool) -> None:
     mono_path = os.path.join(_VERIFY_DIR, "val_monotonicity.csv")
     if os.path.exists(mono_path):
         print("\n[verify] building monotonicity figure…")
-        _save(plot_monotonicity(_VERIFY_DIR), "verification_monotonicity", static)
+        _save(plot_monotonicity(_VERIFY_DIR, n_cols=2), "verification_monotonicity", static)
     else:
         print(
             "\n[verify] val_monotonicity.csv not found — skipping monotonicity chart.\n"

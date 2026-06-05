@@ -70,8 +70,7 @@ Three panels open in the browser:
 | `availability.py` | Entry point. Orchestrates generation, theoretical calculation, Monte Carlo, console report, and Plotly figure. Runtime constants are defined here. |
 | `theoretical_integrated.py` | Computes **E[A_ws] via 2-D numerical quadrature** over the full (β, λ) distributions with mean MTTR. Used as the single theoretical reference. |
 | `experimental.py` | Monte Carlo simulation. Samples Weibull failure-repair cycles, builds a boolean availability matrix, measures system uptime, and records outage durations. |
-| `_rbd.py` | Shared RBD solver. Implements exact 2^N workstation-state enumeration (≤22 workstations) and Monte Carlo fallback (>22), used by both theoretical modules. |
-| `theoretical.py` | Midpoint estimator (reference only). Uses the midpoint of each parameter range rather than integrating over the full distribution. Not used in the default analysis output; kept for comparison. |
+| `_rbd.py` | Shared RBD solver. Implements exact 2^N workstation-state enumeration (≤22 workstations) and Monte Carlo fallback (>22). |
 
 ---
 
@@ -137,7 +136,7 @@ E[A_ws] = (1/N²) Σ_{i,j}  MTTF(β_i, λ_j) / (MTTF(β_i, λ_j) + E[MTTR])
 
 Mean MTTR is used directly in the denominator rather than integrating over the MTTR distribution. This is the physically correct choice: in the Monte Carlo, each machine undergoes many repairs over the horizon, drawing a fresh repair time each time, so the per-machine long-run downtime converges to the mean MTTR. Integrating availability over the MTTR distribution would instead model a machine whose repair time is fixed for its entire lifetime — which is not what the simulation does.
 
-This method corrects the Jensen's inequality bias of the midpoint estimator and produces results that agree closely with the Monte Carlo ground truth.
+This method produces results that agree closely with the Monte Carlo ground truth.
 
 ### Experimental Monte Carlo (`experimental.py`)
 

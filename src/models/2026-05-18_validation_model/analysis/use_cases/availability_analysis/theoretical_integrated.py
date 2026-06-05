@@ -1,50 +1,42 @@
 """
-Improved theoretical steady-state system availability.
+Theoretical steady-state system availability.
 
-Identical to theoretical.py in every respect EXCEPT for how the
-representative workstation availability A_ws is computed.
+Maps the factory's topology to a reliability block diagram (RBD) and computes
+system availability by integrating E[A_ws] over the full (β, λ) distributions.
 
-theoretical.py          uses A_ws at the MIDPOINT of each parameter range.
-theoretical_integrated  uses E[A_ws] integrated over the FULL distributions.
+Workstation availability
+------------------------
+  Each workstation is modelled as an alternating renewal process with Weibull
+  failure times and a uniformly distributed repair duration.
 
-Why this matters
-----------------
-  A_ws = MTTF(beta, lambda) / (MTTF(beta, lambda) + MTTR)
-       = lambda * Gamma(1 + 1/beta) / (lambda * Gamma(1 + 1/beta) + MTTR)
+    MTTF(beta, lambda) = lambda * Gamma(1 + 1/beta)   [hours]
+    A_ws(beta, lambda) = MTTF / (MTTF + E[MTTR])
 
-  This function is concave in lambda.  By Jensen's inequality:
-      E[f(lambda)] < f(E[lambda])
-  so plugging in the midpoint lambda overestimates the true mean A_ws.
-  With a wide lambda range [20, 100] the bias is around 0.7pp per workstation,
-  which compounds to ~2.6pp at the system level.
-
-Integration method
-------------------
   beta   ~ Uniform[beta_min,  beta_max]
   lambda ~ Uniform[lam_min,   lam_max ]
 
-  MTTR is NOT integrated over its distribution.  Instead, the mean MTTR is
-  used directly in the denominator:
+  E[MTTR] (the mean repair time) is used directly in the denominator rather
+  than integrating over the MTTR distribution.  This is the physically correct
+  choice: in the Monte Carlo, each machine undergoes many independent repairs
+  over the horizon, so its long-run downtime per cycle converges to the mean
+  MTTR by the law of large numbers.
 
-    A_ws(beta, lambda) = MTTF(beta, lambda) / (MTTF(beta, lambda) + E[MTTR])
+Integration method
+------------------
+  E[A_ws] is evaluated by 2-D numerical quadrature over (beta, lambda) on a
+  500×500 uniform grid — equivalent to the two-dimensional rectangle rule.
+  With GRID_N = 500 points per axis the approximation error is < 0.01pp.
 
-  This matches the Monte Carlo exactly: each simulated machine draws a fresh
-  repair duration per event, so over a long horizon its effective downtime per
-  cycle converges to the mean MTTR, not to a single random draw.  Integrating
-  A_ws over the MTTR distribution would instead model a machine whose repair
-  time is fixed for its entire lifetime — physically incorrect and a source of
-  a small upward bias via Jensen's inequality (A is convex in MTTR).
+System availability
+-------------------
+  The system is available only when every producible component can be produced
+  simultaneously (series AND gate).  Each component is available when at least
+  one of its capable workstations is up (parallel OR gate).
 
-  The two remaining dimensions (beta, lambda) are integrated over a 500x500
-  grid.  With GRID_N = 500 points per axis the integral converges to < 0.01pp
-  error.
-
-Drop-in compatibility
----------------------
-  compute() returns the same dict structure as theoretical.compute(), with
-  two additional keys:
-      E_A_ws_integrated   float   the numerically integrated E[A_ws]
-      method              str     always "integrated (grid NxN)"
+  Because workstations can be shared across components, a naive product formula
+  is incorrect.  This module therefore uses an exact workstation-state
+  enumeration over all 2^n_ws states (n_ws ≤ 22) with a Monte Carlo fallback
+  for larger factories.
 """
 
 import math
@@ -73,9 +65,17 @@ def compute(gen_result: dict, failure_cfg: dict) -> dict:
 
     Returns
     -------
-    Same dict as theoretical.compute(), plus:
-        E_A_ws_integrated   float   numerically integrated per-WS availability
-        method              str     "integrated (grid NxN)"
+    dict with keys:
+        A_sys              float   overall system availability
+        A_per_component    dict    component_id -> A_comp (marginal, for charts)
+        A_ws               float   E[A_ws] — numerically integrated per-WS availability
+        E_A_ws_integrated  float   same as A_ws (kept for explicitness)
+        MTTF_h             float   MTTF at midpoint parameters (hours, used for scaling)
+        MTTR_h             float   mean MTTR (hours)
+        beta_rep           float   midpoint β (used for MTTF scaling only)
+        lambda_rep         float   midpoint λ (used for MTTF scaling only)
+        bottlenecks        list    components sorted by A_comp ascending
+        method             str     "integrated (grid NxN)"
     """
     # ── Parameter ranges ──────────────────────────────────────────────────────
     beta_min,  beta_max  = float(failure_cfg["weibull_beta"][0]),   float(failure_cfg["weibull_beta"][1])

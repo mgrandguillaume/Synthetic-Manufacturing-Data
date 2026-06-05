@@ -9,22 +9,22 @@ direction should be clear.  A consistent violation is a red flag.
 Tests
 -----
 1. More workstations → shorter or equal makespan.
-   (workstations_count: 2 → 4 → 8, everything else fixed)
+   (workstations_count: 2 → 3 → … → 11, depth=1, processing_time=2h)
 
 2. Larger buffer capacity → shorter or equal makespan.
-   (buffer_capacity: 1 → 3 → 8, everything else fixed)
+   (buffer_capacity: 1 → 2 → … → 10, everything else fixed)
 
 3. More orders → longer makespan.
-   (n_orders: 3 → 6 → 12, everything else fixed)
+   (n_orders: 2 → 4 → … → 20, everything else fixed)
 
 4. Higher branching → more non-raw components.
-   (branching: 1 → 2 → 3, depth=3, sharing_ratio=0, n_products=1)
+   (branching: 1 → 2 → … → 10, depth=3, sharing_ratio=0, n_products=1)
    Generator-only test; no simulation needed.
 
 5. Higher BOM quantity → longer mean lead time.
-   (quantity: [1,1] → [2,2] → [3,3], everything else fixed)
+   (quantity: [1,1] → [2,2] → … → [10,10], everything else fixed)
 
-Each test runs the simulation / generator at three levels of the swept
+Each test runs the simulation / generator at ten levels of the swept
 parameter and checks that the direction of the trend is (weakly or strictly)
 correct.  Because each run uses the same seed, results are deterministic and
 can be audited exactly.
@@ -93,15 +93,35 @@ def _makespan(sim_result: dict) -> float:
 # ── Individual tests ───────────────────────────────────────────────────────────
 
 def _test_more_workstations() -> tuple[str, bool, str, dict]:
-    """More workstations → shorter or equal makespan."""
-    ws_values  = [2, 3, 4]
+    """More workstations → shorter or equal makespan.
+
+    Uses depth=1 (single-stage BOM) so all workstations compete for the same
+    pool of work and every addition directly increases capacity.  A multi-level
+    BOM introduces stage bottlenecks where adding a workstation to a
+    non-bottleneck stage has no effect, producing spurious flat sections.
+
+    processing_time=2h and order_interarrival=1h keep the factory capacity-
+    constrained across all ten workstation levels: demand = 4 productions/h
+    while ws=11 supplies only 5.5/h, so the factory is still a bottleneck at
+    the highest tested level.
+
+    producers_per_component=[20,20] ensures every workstation is assigned to
+    every component type regardless of ws count (with only 4 components and
+    producers_per_component=[4,4], ~3 workstations would be left unassigned
+    at ws=11).
+    """
+    ws_values  = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
     makespans: list[float] = []
 
     for n_ws in ws_values:
-        gen    = generate_from_params(_gen(workstations_count=n_ws))
-        # More orders keeps the factory capacity-constrained across all three
-        # workstation levels; without this ws=4 and ws=8 give the same makespan.
-        result = simulate(gen, **_sim(n_orders=20, n_ticks=8_000))
+        gen = generate_from_params(_gen(
+            workstations_count    = n_ws,
+            depth                 = 1,          # single stage — no stage bottleneck
+            branching             = [4, 4],     # 4 component types per order
+            processing_time       = [2.0, 2.0], # long enough to stay constrained at ws=11
+            producers_per_component = [20, 20], # all workstations assigned all components
+        ))
+        result = simulate(gen, **_sim(n_orders=30, n_ticks=15_000, order_interarrival=1))
         makespans.append(_makespan(result))
 
     # Check weakly decreasing (each value ≤ previous + small tolerance).
@@ -129,7 +149,9 @@ def _test_more_workstations() -> tuple[str, bool, str, dict]:
 
 def _test_larger_buffer() -> tuple[str, bool, str, dict]:
     """Larger buffer capacity → shorter or equal makespan."""
-    buf_values = [1, 3, 8]
+    # Range 1–10 stays within the blocking-sensitive zone where each
+    # increment still meaningfully reduces buffer-induced starvation.
+    buf_values = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     makespans: list[float] = []
 
     gen = generate_from_params(_gen())   # factory layout is fixed
@@ -159,7 +181,7 @@ def _test_larger_buffer() -> tuple[str, bool, str, dict]:
 
 def _test_more_orders() -> tuple[str, bool, str, dict]:
     """More orders → longer makespan."""
-    order_values = [3, 6, 12]
+    order_values = [2, 4, 6, 8, 10, 12, 14, 16, 18, 20]
     makespans: list[float] = []
 
     gen = generate_from_params(_gen())
@@ -196,11 +218,12 @@ def _test_higher_branching_more_components() -> tuple[str, bool, str, dict]:
 
         n_non_raw = 1 + b + b²   (levels 1, 2, 3)
 
-    Testing branching 1 → 2 → 3 gives counts 3 → 7 → 13, which must be
-    strictly increasing.  This is a generator-only test (no simulation).
+    Testing branching 1 → 2 → … → 10 gives counts 3 → 7 → 13 → 21 → 31 →
+    43 → 57 → 73 → 91 → 111, which must be strictly increasing.
+    This is a generator-only test (no simulation).
     """
     depth            = 3
-    branching_values = [1, 2, 3]
+    branching_values = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     counts: list[int] = []
 
     for b in branching_values:
@@ -237,21 +260,23 @@ def _test_higher_quantity_longer_leadtime() -> tuple[str, bool, str, dict]:
     """
     Higher BOM edge quantity → strictly longer mean lead time.
 
-    With quantity = [q, q] for q = 1, 2, 3 and everything else fixed, each
+    With quantity = [q, q] for q = 1..10 and everything else fixed, each
     order requires proportionally more units of every component.  More
     production work per order must translate into a longer lead time.
 
     buffer_capacity is set generously (200) so that blocking is not the
     binding constraint — the effect must come from processing volume alone.
+    n_ticks=20_000 ensures all orders complete even at q=10, where each order
+    requires up to 420 component productions.
     """
-    qty_values  = [1, 2, 3]
+    qty_values  = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     lead_times: list[float] = []
 
     for q in qty_values:
         gen    = generate_from_params(_gen(quantity=[q, q]))
         result = simulate(gen, **_sim(
             n_orders        = 3,
-            n_ticks         = 15_000,
+            n_ticks         = 20_000,
             buffer_capacity = 200,
         ))
         tp = result["throughput"]

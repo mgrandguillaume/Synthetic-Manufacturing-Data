@@ -122,7 +122,7 @@ def run() -> None:
     theo_int = theoretical_integrated.compute(gen_result, fail_cfg)
 
     # ── Scale the simulation horizon to the MTTF ──────────────────────────────
-    # Compute MTTF at midpoint params inline (no need for the midpoint estimator).
+    # Compute representative MTTF from midpoint params for horizon/warmup scaling.
     beta_rep   = (float(fail_cfg["weibull_beta"][0])   + float(fail_cfg["weibull_beta"][1]))   / 2
     lambda_rep = (float(fail_cfg["weibull_lambda"][0]) + float(fail_cfg["weibull_lambda"][1])) / 2
     mttr_rep   = (float(fail_cfg["mttr"][0])           + float(fail_cfg["mttr"][1]))           / 2
@@ -163,7 +163,7 @@ def run() -> None:
     print("  SYSTEM AVAILABILITY ANALYSIS")
     _print_separator("=")
 
-    print(f"\n  Weibull parameters  (midpoint values used for MTTF scaling)")
+    print(f"\n  Weibull parameters  (midpoint values used for horizon scaling)")
     print(f"    beta     = {beta_rep:.3f}  (range {fail_cfg['weibull_beta']})")
     print(f"    lambda   = {lambda_rep:.1f} h  (range {fail_cfg['weibull_lambda']})")
     print(f"    MTTF     = {mttf_h:.2f} h  per workstation")

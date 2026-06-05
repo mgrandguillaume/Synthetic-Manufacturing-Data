@@ -263,41 +263,57 @@ def show(output_dir: str = _DEFAULT_OUTPUT_DIR) -> None:
 
 # ── Monotonicity chart ────────────────────────────────────────────────────────
 
-def plot_monotonicity(output_dir: str = _DEFAULT_OUTPUT_DIR):
+def plot_monotonicity(output_dir: str = _DEFAULT_OUTPUT_DIR, n_cols: int = 3):
     """
     Build and return a figure showing all five monotonicity test results.
 
-    Each subplot shows the three measured values for one test, coloured
-    green (pass) or red (fail), with the expected trend direction annotated.
+    Each subplot shows the measured values for one test, coloured green
+    (pass) or red (fail), with the expected trend direction annotated.
 
     Reads val_monotonicity.csv written by verification.run_all().
+
+    Parameters
+    ----------
+    output_dir : directory containing val_monotonicity.csv
+    n_cols     : number of subplot columns (default 3 for the UI, pass 2
+                 for a two-column report layout)
     """
     path = os.path.join(output_dir, "val_monotonicity.csv")
     df   = pd.read_csv(path)
 
     # Preserve the order tests were run, not alphabetical.
     ordered_tests = list(dict.fromkeys(df["test_name"].tolist()))
+    n_tests = len(ordered_tests)
 
     COL_PASS = theme.STATE_COLORS["processing"]   # green/blue — expected
     COL_FAIL = theme.STATE_COLORS["failed"]        # red — unexpected
 
     ARROW = {"increasing": "↑ expected", "decreasing": "↓ expected"}
 
-    # Layout: 2 rows × 3 cols; tests 1-3 in row 1, tests 4-5 in row 2
-    positions  = [(1, 1), (1, 2), (1, 3), (2, 1), (2, 2)]
-    titles     = []
+    # Compute grid dimensions from n_cols.
+    import math
+    n_rows = math.ceil(n_tests / n_cols)
+    positions = [
+        (i // n_cols + 1, i % n_cols + 1) for i in range(n_tests)
+    ]
+    total_cells = n_rows * n_cols
+
+    titles = []
     for name in ordered_tests:
         sub    = df[df["test_name"] == name]
         passed = bool(sub["passed"].iloc[0])
         prefix = "✓" if passed else "✗"
         titles.append(f"{prefix}  {sub['title'].iloc[0]}")
-    # pad to 6 entries (last cell empty)
-    titles += [""] * (6 - len(titles))
+    # pad to fill the grid (last cell(s) empty)
+    titles += [""] * (total_cells - len(titles))
+
+    # Row height: 280 px per row keeps subplots readable at any column count.
+    fig_height = max(500, n_rows * 280)
 
     fig = make_subplots(
-        rows=2, cols=3,
+        rows=n_rows, cols=n_cols,
         subplot_titles=titles,
-        vertical_spacing=0.18,
+        vertical_spacing=max(0.10, 0.40 / n_rows),
         horizontal_spacing=0.10,
     )
 
@@ -356,7 +372,7 @@ def plot_monotonicity(output_dir: str = _DEFAULT_OUTPUT_DIR):
         paper_bgcolor=theme.BG,
         plot_bgcolor=theme.BG,
         font=dict(color=theme.TEXT, family="Inter, system-ui, sans-serif", size=12),
-        height=550,
+        height=fig_height,
         margin=dict(l=60, r=40, t=60, b=40),
     )
 
