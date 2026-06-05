@@ -23,7 +23,7 @@ This metric is called **steady-state system availability** (A_sys). It is comput
 
 ## 1. How to Run
 
-**Via the UI (recommended):** open the **Availability** page in the Dash app. Set the number of replications, then click **Run availability analysis**. The simulation horizon and warm-up period are scaled automatically to the configured MTTF — no manual tuning required.
+**Via the UI (recommended):** open the **Availability** page in the Dash app. Set the number of replications, then click **Run availability analysis**. The simulation horizon and warm-up period are scaled automatically to the configured MTBF — no manual tuning required.
 
 **Standalone:** from the model root:
 
@@ -83,9 +83,9 @@ The factory is modelled as a **reliability block diagram (RBD)** with two levels
 Each workstation is modelled as a **Weibull** wear-out process. The expected availability is computed by integrating over the full (β, λ) distribution with the mean MTTR:
 
 ```
-MTTF(β, λ) = λ · Γ(1 + 1/β)
+MTBF(β, λ) = λ · Γ(1 + 1/β)
 
-A_ws(β, λ) = MTTF(β, λ) / (MTTF(β, λ) + E[MTTR])
+A_ws(β, λ) = MTBF(β, λ) / (MTBF(β, λ) + E[MTTR])
 
 E[A_ws] = average of A_ws(β, λ) over a 500×500 grid spanning
           [β_min, β_max] × [λ_min, λ_max]
@@ -131,7 +131,7 @@ For up to 22 workstations this is solved exactly. For larger factories a Monte C
 Computes **E[A_ws]** by 2-D numerical quadrature over the full joint distribution of (β, λ) on a 500×500 grid:
 
 ```
-E[A_ws] = (1/N²) Σ_{i,j}  MTTF(β_i, λ_j) / (MTTF(β_i, λ_j) + E[MTTR])
+E[A_ws] = (1/N²) Σ_{i,j}  MTBF(β_i, λ_j) / (MTBF(β_i, λ_j) + E[MTTR])
 ```
 
 Mean MTTR is used directly in the denominator rather than integrating over the MTTR distribution. This is the physically correct choice: in the Monte Carlo, each machine undergoes many repairs over the horizon, drawing a fresh repair time each time, so the per-machine long-run downtime converges to the mean MTTR. Integrating availability over the MTTR distribution would instead model a machine whose repair time is fixed for its entire lifetime — which is not what the simulation does.
@@ -155,15 +155,15 @@ The mean and 95% CI across replications are the experimental estimate. This is t
 
 ## 6. Tunable Parameters
 
-**Via the UI:** only **Replications** is exposed — the horizon and warm-up are computed automatically from the MTTF (see below).
+**Via the UI:** only **Replications** is exposed — the horizon and warm-up are computed automatically from the MTBF (see below).
 
 **Standalone (`availability.py`):**
 
 | Constant | Default | Effect |
 |---|---|---|
 | `N_REPLICATIONS` | 1000 | More replications → narrower CI. 200 ≈ ±0.5pp, 1000 ≈ ±0.24pp. Scales runtime linearly. |
-| `WARMUP_MTTF_MULT` | 4.0 | Warm-up = this multiplier × MTTF. Discards the initial transient before steady state. |
-| `HORIZON_MTTF_MULT` | 50.0 | Measurement window = this multiplier × MTTF after warm-up. Ensures many failure-repair cycles. |
+| `WARMUP_MTBF_MULT` | 4.0 | Warm-up = this multiplier × MTBF. Discards the initial transient before steady state. |
+| `HORIZON_MTBF_MULT` | 50.0 | Measurement window = this multiplier × MTBF after warm-up. Ensures many failure-repair cycles. |
 | `POINTS_PER_MIN_MTTR` | 5 | Minimum grid points inside one minimum-MTTR window. Prevents short outages from falling between grid points. |
 | `N_TIMEPOINTS_FLOOR` | 5 000 | Minimum number of time-grid points regardless of horizon length. |
 

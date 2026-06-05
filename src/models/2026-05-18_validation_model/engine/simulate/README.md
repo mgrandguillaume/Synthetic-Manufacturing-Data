@@ -294,7 +294,7 @@ failures are disabled).  `costs` always includes a `RepairCost` column.
 > **Primary source:** Hopp, W. J., & Spearman, M. L. (2008). *Factory Physics*
 > (3rd ed.). Waveland Press. Chapters 7 and 8.
 >
-> The MTTF formula comes from standard Weibull distribution theory, not from
+> The MTBF formula comes from standard Weibull distribution theory, not from
 > Hopp & Spearman directly (see note below).
 
 The `utilization` DataFrame includes four additional columns derived analytically
@@ -303,40 +303,40 @@ computed before any simulation result is needed; they can therefore be used to
 reason about the factory's expected behaviour before or after running the
 simulation.
 
-### MTTF — Mean time to failure
+### MTBF — Mean time between failures
 
 For a workstation whose failure inter-arrival times follow a Weibull distribution
 with shape parameter **β** and scale parameter **λ** (hours), the mean time
 between failures is:
 
 ```
-MTTF = λ · Γ(1 + 1/β)
+MTBF = λ · Γ(1 + 1/β)
 ```
 
 where Γ is the standard gamma function.
 
 > **⚠ Citation note:** This formula is the expectation of the Weibull
 > distribution — standard probability theory.  Hopp & Spearman (Ch. 8) use a
-> generic symbol *m₀* for mean time to failure without specifying the underlying
-> failure distribution or this formula.  The Weibull parameterisation is a model
-> design choice, not a prescription from the book.
+> generic symbol *m₀* for mean time between failures without specifying the
+> underlying failure distribution or this formula.  The Weibull parameterisation
+> is a model design choice, not a prescription from the book.
 
 | Column | Type | Meaning |
 |---|---|---|
-| `MTTF_h` | float or None | Theoretical MTTF in hours; `None` when failures are disabled |
+| `MTBF_h` | float or None | Theoretical MTBF in hours; `None` when failures are disabled |
 
 The values of `ws_lambda` and `ws_beta` used here are the per-workstation
 samples drawn in `preprocess.py` from the configured ranges — so each
-workstation gets its own MTTF.
+workstation gets its own MTBF.
 
 ### Availability
 
 The long-run fraction of time a workstation is operational (not under repair).
-Following Hopp & Spearman (Ch. 8), where *m₀* = mean time to failure and
+Following Hopp & Spearman (Ch. 8), where *m₀* = mean time between failures and
 *mᵣ* = mean repair time:
 
 ```
-A = m₀ / (m₀ + mᵣ)   →   A = MTTF / (MTTF + MTTR_mean)
+A = m₀ / (m₀ + mᵣ)   →   A = MTBF / (MTBF + MTTR_mean)
 ```
 
 > **Model adaptation:** Hopp & Spearman use generic *mᵣ* (mean repair time).
@@ -407,7 +407,7 @@ For a fixed demand rate *r*, the station with the highest `t_e` has the lowest
 ### Example interpretation
 
 ```
-Workstation  t0_h  MTTF_h  A      t_e_h   IsPredictedBottleneck
+Workstation  t0_h  MTBF_h  A      t_e_h   IsPredictedBottleneck
 WS_1         1.20  45.3    0.90   1.33    False
 WS_3         0.95  18.7    0.79   1.20    False
 WS_7         1.05  22.1    0.82   1.28    True    ← predicted bottleneck

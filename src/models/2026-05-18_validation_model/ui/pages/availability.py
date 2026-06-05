@@ -51,7 +51,7 @@ def _render_results(theo_int, exp, gen_result, n_reps) -> list:
     weibull_info = {
         "beta_rep":              round(theo_int["beta_rep"],   3),
         "lambda_rep":            round(theo_int["lambda_rep"], 2),
-        "MTTF_h":                round(theo_int["MTTF_h"],     2),
+        "MTBF_h":                round(theo_int["MTBF_h"],     2),
         "MTTR_h":                round(theo_int["MTTR_h"],     2),
         "A_ws_integrated (%)":   f"{theo_int['A_ws']*100:.3f}",
     }
@@ -119,7 +119,7 @@ def layout():
         html.H1("Availability analysis"),
         html.P("Compares theoretical (integrated RBD) and experimental (Monte Carlo) "
                "system availability. Horizon and warm-up are scaled automatically to "
-               "the workstation MTTF.",
+               "the workstation MTBF.",
                className="page-caption"),
 
         html.H2("Monte Carlo parameters"),
@@ -182,21 +182,21 @@ def _avail_callback(n_load, n_clicks, n_reps):
         from engine.generate.generate import generate_simple_assembly
         from analysis.use_cases.availability_analysis import theoretical_integrated, experimental
         from analysis.use_cases.availability_analysis.availability import (
-            WARMUP_MTTF_MULT, HORIZON_MTTF_MULT,
+            WARMUP_MTBF_MULT, HORIZON_MTBF_MULT,
             POINTS_PER_MIN_MTTR, N_TIMEPOINTS_FLOOR,
         )
 
         gen_result = generate_simple_assembly(store.CONFIG_PATH, export_csv=False)
         theo_int   = theoretical_integrated.compute(gen_result, fail_cfg)
 
-        # Scale horizon and warm-up to MTTF (same logic as standalone script).
+        # Scale horizon and warm-up to MTBF (same logic as standalone script).
         beta_rep   = (float(fail_cfg["weibull_beta"][0])   + float(fail_cfg["weibull_beta"][1]))   / 2
         lambda_rep = (float(fail_cfg["weibull_lambda"][0]) + float(fail_cfg["weibull_lambda"][1])) / 2
-        mttf_h     = lambda_rep * math.gamma(1.0 + 1.0 / beta_rep)
+        mtbf_h     = lambda_rep * math.gamma(1.0 + 1.0 / beta_rep)
         mttr_min   = float(fail_cfg["mttr"][0])
 
-        warmup_hours  = WARMUP_MTTF_MULT  * mttf_h
-        horizon_hours = warmup_hours + HORIZON_MTTF_MULT * mttf_h
+        warmup_hours  = WARMUP_MTBF_MULT  * mtbf_h
+        horizon_hours = warmup_hours + HORIZON_MTBF_MULT * mtbf_h
         span          = horizon_hours - warmup_hours
         n_timepoints  = max(
             N_TIMEPOINTS_FLOOR,

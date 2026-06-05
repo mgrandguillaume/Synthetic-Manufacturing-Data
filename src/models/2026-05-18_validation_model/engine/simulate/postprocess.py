@@ -20,20 +20,20 @@ Factory Physics metrics
 The utilization DataFrame includes additional columns based on concepts from
 Hopp & Spearman, *Factory Physics* (3rd ed., 2008), Chapters 7–8.
 
-  MTTF_h          — mean time to failure (hours) per workstation.
+  MTBF_h          — mean time between failures (hours) per workstation.
                     The simulator draws failure inter-arrival times from a
                     Weibull(λ, β) distribution; the exact mean is:
-                        MTTF = λ · Γ(1 + 1/β)
+                        MTBF = λ · Γ(1 + 1/β)
                     where Γ is the standard gamma function.
                     NOTE: this formula comes from Weibull distribution
                     theory, not from Hopp & Spearman directly.  The book
-                    uses a generic m_0 (mean time to failure) without
+                    uses a generic m_0 (mean time between failures) without
                     tying it to a specific failure distribution.
 
   Availability    — long-run fraction of time the machine is operational.
                     Following Hopp & Spearman (Ch. 8), availability is:
                         A = m_0 / (m_0 + m_r)
-                    where m_0 = MTTF and m_r = mean repair time (MTTR_mean).
+                    where m_0 = MTBF and m_r = mean repair time (MTTR_mean).
                     In this model MTTR_mean = (mttr_min + mttr_max) / 2.
 
   t_e_h           — effective process time (hours): the mean time to produce
@@ -53,7 +53,7 @@ Hopp & Spearman, *Factory Physics* (3rd ed., 2008), Chapters 7–8.
                     flags the machine most penalised by failures and long
                     processing times.
 
-When failures are disabled, A = 1, MTTF_h = None, and t_e_h = t_0
+When failures are disabled, A = 1, MTBF_h = None, and t_e_h = t_0
 (the mean processing time; no availability penalty).
 """
 
@@ -132,19 +132,19 @@ def postprocess(
     #
     # For each workstation the following quantities are computed:
     #
-    #   MTTF (mean time to failure, hours)
+    #   MTBF (mean time between failures, hours)
     #     The simulator uses Weibull(λ, β) inter-failure times.  The mean of
     #     a Weibull distribution is:
-    #         MTTF = λ · Γ(1 + 1/β)
+    #         MTBF = λ · Γ(1 + 1/β)
     #     where Γ is the standard gamma function.
     #     This is standard Weibull distribution theory, not specific to
     #     Hopp & Spearman.  The book (Ch. 8) uses a generic m_0 = mean time
-    #     to failure without specifying the underlying failure distribution.
+    #     between failures without specifying the underlying failure distribution.
     #
     #   Availability A
     #     Hopp & Spearman (Ch. 8) define availability as:
     #         A = m_0 / (m_0 + m_r)
-    #     where m_0 = MTTF and m_r = mean repair time (MTTR).
+    #     where m_0 = MTBF and m_r = mean repair time (MTTR).
     #     Here MTTR_mean = (mttr_min + mttr_max) / 2 is used as m_r because
     #     the config specifies a uniform repair-time range; this is a model
     #     adaptation, not stated in the book.
@@ -164,7 +164,7 @@ def postprocess(
     #     multi-product factory the demand mix varies by station, so this is an
     #     approximation; it flags the machine most penalised by failures.
     #
-    # When failures are disabled, MTTF = ∞, A = 1, and t_e = t_0.
+    # When failures are disabled, MTBF = ∞, A = 1, and t_e = t_0.
 
     ws_beta          = pre["ws_beta"]
     ws_lambda        = pre["ws_lambda"]
@@ -185,20 +185,20 @@ def postprocess(
         t0 = float(np.mean(capable_pts)) if len(capable_pts) > 0 else 0.0
 
         if failures_enabled and ws_lambda[wi] > 0 and ws_beta[wi] > 0:
-            # Weibull MTTF: E[X] = λ·Γ(1+1/β)  (standard Weibull distribution formula)
-            mttf  = ws_lambda[wi] * math.gamma(1.0 + 1.0 / ws_beta[wi])
-            denom = mttf + mttr_mean
-            avail = mttf / denom if denom > 0 else 1.0
+            # Weibull MTBF: E[X] = λ·Γ(1+1/β)  (standard Weibull distribution formula)
+            mtbf  = ws_lambda[wi] * math.gamma(1.0 + 1.0 / ws_beta[wi])
+            denom = mtbf + mttr_mean
+            avail = mtbf / denom if denom > 0 else 1.0
             t_e   = t0 / avail if avail > 0 else float("inf")
             _fp[ws_id] = {
-                "MTTF_h":      round(mttf,  4),
+                "MTBF_h":      round(mtbf,  4),
                 "Availability": round(avail, 4),
                 "t_e_h":        round(t_e,   4),
             }
         else:
             # Failures disabled: machine is always available.
             _fp[ws_id] = {
-                "MTTF_h":      None,   # undefined when failures are off
+                "MTBF_h":      None,   # undefined when failures are off
                 "Availability": 1.0,
                 "t_e_h":        round(t0, 4),
             }
@@ -231,8 +231,8 @@ def postprocess(
             "IdlePct":     100.0 * counts["idle"]       / total if total else 0.0,
             "FailedPct":   100.0 * counts["failed"]     / total if total else 0.0,
             # ── Factory Physics metrics ────────────────────────────────────────
-            "MTTF_h":              fp["MTTF_h"],        # Weibull MTTF = λ·Γ(1+1/β) [Weibull theory]
-            "Availability":        fp["Availability"],  # A = MTTF/(MTTF+MTTR)  [H&S Ch. 8]
+            "MTBF_h":              fp["MTBF_h"],        # Weibull MTBF = λ·Γ(1+1/β) [Weibull theory]
+            "Availability":        fp["Availability"],  # A = MTBF/(MTBF+MTTR)  [H&S Ch. 8]
             "t_e_h":               fp["t_e_h"],         # t_e = t_0/A  [H&S Eq. 8.2]
             "IsPredictedBottleneck": ws_id == bottleneck_id,
         })

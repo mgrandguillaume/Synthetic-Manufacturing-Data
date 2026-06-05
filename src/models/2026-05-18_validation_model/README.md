@@ -173,11 +173,11 @@ Controls stochastic machine failures. When `enabled: false`, all parameters in t
 |---|---|---|
 | `enabled` | bool | Master switch. `true` activates the Weibull failure model; `false` disables all failures entirely. |
 | `weibull_beta` | [min, max] float | Weibull shape parameter β, sampled once per workstation from this range. Determines the failure-rate trend over machine lifetime: `β < 1` = infant mortality (failure rate decreases over time), `β = 1` = constant failure rate (exponential distribution, memoryless), `β > 1` = wear-out behaviour (failure rate increases with age — the most realistic for mechanical equipment). |
-| `weibull_lambda` | [min, max] float (hours) | Weibull scale parameter λ (characteristic life in simulated hours), sampled once per workstation. Larger values mean the machine lives longer before its first failure on average. The mean time to failure (MTTF) in hours is `λ · Γ(1 + 1/β)`. |
+| `weibull_lambda` | [min, max] float (hours) | Weibull scale parameter λ (characteristic life in simulated hours), sampled once per workstation. Larger values mean the machine lives longer before its first failure on average. The mean time between failures (MTBF) in hours is `λ · Γ(1 + 1/β)`. |
 | `mttr` | [min, max] float (hours) | Repair duration per failure event (Mean Time To Repair). A fresh value is sampled uniformly from this range each time a failure occurs. Repair counts down tick by tick; the machine returns to idle when the counter reaches zero, with age reset to 0 and a new TTF drawn. |
 | `repair_cost` | [min, max] float | Cost charged per failure event. A fresh value is sampled uniformly from this range each time a failure occurs, independently of repair duration. Accumulated in the `RepairCost` column of `costs.csv`. |
 
-**Note on age accumulation:** machine age advances only during `setup` and `processing` states. A workstation that is idle, starved, or blocked does not age. This means MTTF is measured in *active working hours*, not calendar time.
+**Note on age accumulation:** machine age advances only during `setup` and `processing` states. A workstation that is idle, starved, or blocked does not age. This means MTBF is measured in *active working hours*, not calendar time.
 
 ---
 
@@ -648,32 +648,32 @@ Each workstation spends every tick in exactly one of six states. At the end of t
 > **Primary source:** Hopp, W. J., & Spearman, M. L. (2008). *Factory Physics* (3rd ed.).
 > Waveland Press. Chapters 7–8.
 >
-> The MTTF formula is from standard Weibull distribution theory, not from Hopp & Spearman
+> The MTBF formula is from standard Weibull distribution theory, not from Hopp & Spearman
 > directly (see note below).
 
 The `utilization.csv` file (and the in-memory `utilization` DataFrame) includes four additional columns derived analytically from each workstation's sampled Weibull failure parameters. These give theoretical predictions that can be compared against the empirical simulation results.
 
-**`MTTF_h`** — Mean time to failure (hours)
+**`MTBF_h`** — Mean time between failures (hours)
 
 For a Weibull failure distribution with shape **β** and scale **λ** (hours), the theoretical mean time between failures is:
 
 ```
-MTTF = λ · Γ(1 + 1/β)
+MTBF = λ · Γ(1 + 1/β)
 ```
 
 where Γ is the gamma function. `None` when failures are disabled.
 
 > ⚠ **Citation note:** This formula is the expectation of the Weibull distribution —
 > standard probability theory. Hopp & Spearman (Ch. 8) use a generic symbol *m₀* for mean
-> time to failure without specifying the failure distribution or this formula. The choice of
-> Weibull parameterisation is a design decision of this model, not a prescription from the book.
+> time between failures without specifying the failure distribution or this formula. The choice
+> of Weibull parameterisation is a design decision of this model, not a prescription from the book.
 
 **`Availability`** — Long-run uptime fraction
 
-Following Hopp & Spearman (Ch. 8), where *m₀* = mean time to failure and *mᵣ* = mean repair time:
+Following Hopp & Spearman (Ch. 8), where *m₀* = mean time between failures and *mᵣ* = mean repair time:
 
 ```
-A = m₀ / (m₀ + mᵣ)   →   A = MTTF / (MTTF + MTTR_mean)
+A = m₀ / (m₀ + mᵣ)   →   A = MTBF / (MTBF + MTTR_mean)
 ```
 
 A value of 0.80 means the machine is operational 80 % of the time. Always 1.0 when failures are disabled.
@@ -925,7 +925,7 @@ Compares two approaches to computing steady-state system availability for the ge
 | **Theoretical (integrated)** | E[A_ws] is computed by 2-D numerical quadrature over the full (β, λ) distributions using the mean MTTR, then propagated through the factory's RBD topology via exact 2^N workstation-state enumeration (or Monte Carlo for >22 workstations) |
 | **Experimental** | Monte Carlo: replications of the full Weibull failure–repair cycle on an adaptive time grid, aggregated into an empirical availability distribution and outage duration histogram |
 
-The simulation horizon and warm-up are scaled automatically to the workstation MTTF, so the analysis is well-conditioned across any configured parameter range. The script produces a three-panel figure (per-replication availability histogram; outage duration distribution; Monte Carlo convergence) and prints a comparison table to stdout. See the use case README for a full explanation of the methodology and how to interpret the results.
+The simulation horizon and warm-up are scaled automatically to the workstation MTBF, so the analysis is well-conditioned across any configured parameter range. The script produces a three-panel figure (per-replication availability histogram; outage duration distribution; Monte Carlo convergence) and prints a comparison table to stdout. See the use case README for a full explanation of the methodology and how to interpret the results.
 
 ---
 

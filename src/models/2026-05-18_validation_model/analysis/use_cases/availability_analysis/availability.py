@@ -54,13 +54,13 @@ _CONFIG_PATH = os.path.join(_MODEL_ROOT, "config.yaml")
 # cost of longer runtime (~1 min for 200 reps on a typical laptop).
 N_REPLICATIONS = 1000
 
-# The simulation horizon and warm-up are scaled to the workstation MTTF rather
+# The simulation horizon and warm-up are scaled to the workstation MTBF rather
 # than hardcoded.  A fixed 2000 h horizon is meaningless across configs: it is
-# far too short for a 1500 h MTTF (too few failure-repair cycles observed) and
+# far too short for a 1500 h MTBF (too few failure-repair cycles observed) and
 # wastefully long for a 50 h one.  Scaling keeps the estimate well-conditioned
 # regardless of the configured Weibull parameters.
-WARMUP_MTTF_MULT  = 4.0    # discard the first ~4x MTTF as start-up transient
-HORIZON_MTTF_MULT = 50.0   # then measure ~50 failure-repair cycles
+WARMUP_MTBF_MULT  = 4.0    # discard the first ~4x MTBF as start-up transient
+HORIZON_MTBF_MULT = 50.0   # then measure ~50 failure-repair cycles
 
 # Time-grid resolution.  The grid must be fine enough to resolve the SHORTEST
 # possible repair, otherwise brief outages can fall entirely between two grid
@@ -121,16 +121,16 @@ def run() -> None:
     print("\nComputing theoretical availability (integrated)...")
     theo_int = theoretical_integrated.compute(gen_result, fail_cfg)
 
-    # ── Scale the simulation horizon to the MTTF ──────────────────────────────
-    # Compute representative MTTF from midpoint params for horizon/warmup scaling.
+    # ── Scale the simulation horizon to the MTBF ──────────────────────────────
+    # Compute representative MTBF from midpoint params for horizon/warmup scaling.
     beta_rep   = (float(fail_cfg["weibull_beta"][0])   + float(fail_cfg["weibull_beta"][1]))   / 2
     lambda_rep = (float(fail_cfg["weibull_lambda"][0]) + float(fail_cfg["weibull_lambda"][1])) / 2
     mttr_rep   = (float(fail_cfg["mttr"][0])           + float(fail_cfg["mttr"][1]))           / 2
-    mttf_h     = lambda_rep * math.gamma(1.0 + 1.0 / beta_rep)
+    mtbf_h     = lambda_rep * math.gamma(1.0 + 1.0 / beta_rep)
     mttr_min   = float(fail_cfg["mttr"][0])
 
-    warmup_hours  = WARMUP_MTTF_MULT * mttf_h
-    horizon_hours = warmup_hours + HORIZON_MTTF_MULT * mttf_h
+    warmup_hours  = WARMUP_MTBF_MULT * mtbf_h
+    horizon_hours = warmup_hours + HORIZON_MTBF_MULT * mtbf_h
 
     # Resolve the grid finely enough to capture the shortest possible repair.
     span         = horizon_hours - warmup_hours
@@ -166,7 +166,7 @@ def run() -> None:
     print(f"\n  Weibull parameters  (midpoint values used for horizon scaling)")
     print(f"    beta     = {beta_rep:.3f}  (range {fail_cfg['weibull_beta']})")
     print(f"    lambda   = {lambda_rep:.1f} h  (range {fail_cfg['weibull_lambda']})")
-    print(f"    MTTF     = {mttf_h:.2f} h  per workstation")
+    print(f"    MTBF     = {mtbf_h:.2f} h  per workstation")
     print(f"    mean MTTR = {mttr_rep:.2f} h  per workstation")
     print(f"    A_ws (integrated E[A_ws]) = {_fmt_pct(theo_int['A_ws'])}")
 

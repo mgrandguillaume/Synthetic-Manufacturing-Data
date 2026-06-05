@@ -36,7 +36,7 @@ Warm-up
 -------
 The first `warmup_hours` of each replication are discarded to avoid measuring
 the initial transient before the failure-repair process reaches steady state.
-A warm-up of 2-3x the expected MTTF is recommended.
+A warm-up of 2-3x the expected MTBF is recommended.
 """
 
 import math
@@ -67,7 +67,7 @@ def run(
     n_replications:
         Number of independent Monte Carlo runs.  200 gives a tight 95% CI.
     horizon_hours:
-        Total time simulated per replication (hours).  Should be >> MTTF so
+        Total time simulated per replication (hours).  Should be >> MTBF so
         many failure-repair cycles are observed.
     warmup_hours:
         Ticks before this time are excluded from the availability measurement.

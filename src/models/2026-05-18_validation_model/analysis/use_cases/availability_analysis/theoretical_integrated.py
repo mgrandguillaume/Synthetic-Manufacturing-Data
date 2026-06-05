@@ -9,8 +9,8 @@ Workstation availability
   Each workstation is modelled as an alternating renewal process with Weibull
   failure times and a uniformly distributed repair duration.
 
-    MTTF(beta, lambda) = lambda * Gamma(1 + 1/beta)   [hours]
-    A_ws(beta, lambda) = MTTF / (MTTF + E[MTTR])
+    MTBF(beta, lambda) = lambda * Gamma(1 + 1/beta)   [hours]
+    A_ws(beta, lambda) = MTBF / (MTBF + E[MTTR])
 
   beta   ~ Uniform[beta_min,  beta_max]
   lambda ~ Uniform[lam_min,   lam_max ]
@@ -70,10 +70,10 @@ def compute(gen_result: dict, failure_cfg: dict) -> dict:
         A_per_component    dict    component_id -> A_comp (marginal, for charts)
         A_ws               float   E[A_ws] — numerically integrated per-WS availability
         E_A_ws_integrated  float   same as A_ws (kept for explicitness)
-        MTTF_h             float   MTTF at midpoint parameters (hours, used for scaling)
+        MTBF_h             float   MTBF at midpoint parameters (hours, used for scaling)
         MTTR_h             float   mean MTTR (hours)
-        beta_rep           float   midpoint β (used for MTTF scaling only)
-        lambda_rep         float   midpoint λ (used for MTTF scaling only)
+        beta_rep           float   midpoint β (used for MTBF scaling only)
+        lambda_rep         float   midpoint λ (used for MTBF scaling only)
         bottlenecks        list    components sorted by A_comp ascending
         method             str     "integrated (grid NxN)"
     """
@@ -86,7 +86,7 @@ def compute(gen_result: dict, failure_cfg: dict) -> dict:
     beta_rep   = (beta_min  + beta_max)  / 2
     lambda_rep = (lam_min   + lam_max)   / 2
     mttr_rep   = (mttr_min  + mttr_max)  / 2
-    mttf_h     = lambda_rep * math.gamma(1.0 + 1.0 / beta_rep)
+    mtbf_h     = lambda_rep * math.gamma(1.0 + 1.0 / beta_rep)
 
     # ── Integrate E[A_ws] over the full parameter distributions ───────────────
     E_A_ws = _integrate_A_ws(beta_min, beta_max, lam_min, lam_max, mttr_min, mttr_max)
@@ -125,7 +125,7 @@ def compute(gen_result: dict, failure_cfg: dict) -> dict:
                 "A_per_component":   A_per_comp,
                 "A_ws":              E_A_ws,
                 "E_A_ws_integrated": E_A_ws,
-                "MTTF_h":            mttf_h,
+                "MTBF_h":            mtbf_h,
                 "MTTR_h":            mttr_rep,
                 "beta_rep":          beta_rep,
                 "lambda_rep":        lambda_rep,
@@ -147,7 +147,7 @@ def compute(gen_result: dict, failure_cfg: dict) -> dict:
         "A_per_component":   A_per_comp,
         "A_ws":              E_A_ws,
         "E_A_ws_integrated": E_A_ws,
-        "MTTF_h":            mttf_h,
+        "MTBF_h":            mtbf_h,
         "MTTR_h":            mttr_rep,
         "beta_rep":          beta_rep,
         "lambda_rep":        lambda_rep,
@@ -171,7 +171,7 @@ def _integrate_A_ws(
     duration per event and therefore experiences the mean MTTR over many
     cycles — not a single random draw held for its lifetime.
 
-    A_ws(beta, lambda) = MTTF(beta, lambda) / (MTTF(beta, lambda) + E[MTTR])
+    A_ws(beta, lambda) = MTBF(beta, lambda) / (MTBF(beta, lambda) + E[MTTR])
     """
     mttr_mean = (mttr_min + mttr_max) / 2
 
@@ -181,11 +181,11 @@ def _integrate_A_ws(
     # 2-D grid: shape (GRID_N, GRID_N)
     B, L = np.meshgrid(betas, lambdas, indexing="ij")
 
-    # MTTF = lambda * Gamma(1 + 1/beta)  — vectorised via lookup
+    # MTBF = lambda * Gamma(1 + 1/beta)  — vectorised via lookup
     gamma_vals = np.array([math.gamma(1.0 + 1.0 / b) for b in betas])  # shape (GRID_N,)
-    MTTF = L * gamma_vals[:, np.newaxis]   # broadcast: (GRID_N, GRID_N)
+    MTBF = L * gamma_vals[:, np.newaxis]   # broadcast: (GRID_N, GRID_N)
 
-    A_ws_grid = MTTF / (MTTF + mttr_mean)
+    A_ws_grid = MTBF / (MTBF + mttr_mean)
 
     # Average over the uniform (beta, lambda) grid
     return float(np.mean(A_ws_grid))

@@ -162,8 +162,8 @@ def _export_availability(static: bool) -> None:
     from analysis.use_cases.availability_analysis import theoretical_integrated, experimental
     from analysis.use_cases.availability_analysis.availability import (
         _show_plots,
-        WARMUP_MTTF_MULT,
-        HORIZON_MTTF_MULT,
+        WARMUP_MTBF_MULT,
+        HORIZON_MTBF_MULT,
         POINTS_PER_MIN_MTTR,
         N_TIMEPOINTS_FLOOR,
     )
@@ -190,10 +190,10 @@ def _export_availability(static: bool) -> None:
     beta_rep   = (float(fail_cfg["weibull_beta"][0])   + float(fail_cfg["weibull_beta"][1]))   / 2
     lambda_rep = (float(fail_cfg["weibull_lambda"][0]) + float(fail_cfg["weibull_lambda"][1])) / 2
     mttr_min   = float(fail_cfg["mttr"][0])
-    mttf_h     = lambda_rep * math.gamma(1.0 + 1.0 / beta_rep)
+    mtbf_h     = lambda_rep * math.gamma(1.0 + 1.0 / beta_rep)
 
-    warmup_hours  = WARMUP_MTTF_MULT  * mttf_h
-    horizon_hours = warmup_hours + HORIZON_MTTF_MULT * mttf_h
+    warmup_hours  = WARMUP_MTBF_MULT  * mtbf_h
+    horizon_hours = warmup_hours + HORIZON_MTBF_MULT * mtbf_h
     n_timepoints  = max(
         N_TIMEPOINTS_FLOOR,
         int(math.ceil((horizon_hours - warmup_hours) / (mttr_min / POINTS_PER_MIN_MTTR))) + 1,
