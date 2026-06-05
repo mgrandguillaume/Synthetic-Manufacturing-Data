@@ -123,9 +123,12 @@ def run(
     time_grid = np.linspace(warmup_hours, horizon_hours, n_timepoints)
 
     # ── Monte Carlo loop ───────────────────────────────────────────────────────
-    A_per_run:       list[float]          = []
-    system_up_last:  np.ndarray | None    = None
-    ws_up_totals                          = np.zeros(n_ws)   # accumulates per-run availability
+    A_per_run:          list[float]       = []
+    system_up_last:     np.ndarray | None = None
+    ws_up_totals                          = np.zeros(n_ws)
+    outage_durations_h: list[float]       = []   # duration of every system-down episode (hours)
+
+    dt_h = float(time_grid[1] - time_grid[0]) if n_timepoints > 1 else 1.0
 
     for rep in range(n_replications):
         # Sample per-workstation Weibull parameters for this replication.
@@ -151,13 +154,24 @@ def run(
             if not capable_idx:
                 system_up[:] = False
                 break
-            # All capable workstations failed at this tick?
             comp_down = np.all(ws_failed[capable_idx, :], axis=0)
             system_up &= ~comp_down
 
         A_rep = float(np.mean(system_up))
         A_per_run.append(A_rep)
-        ws_up_totals += 1.0 - np.mean(ws_failed, axis=1)   # fraction up per ws
+        ws_up_totals += 1.0 - np.mean(ws_failed, axis=1)
+
+        # Collect outage durations: find all consecutive runs of False in system_up.
+        # prepend/append True so boundary outages are captured correctly.
+        padded = np.empty(n_timepoints + 2, dtype=np.int8)
+        padded[0]  = 1
+        padded[-1] = 1
+        padded[1:-1] = system_up.astype(np.int8)
+        diff    = np.diff(padded)
+        starts  = np.where(diff < 0)[0]   # 1→0 transitions (outage begins)
+        ends    = np.where(diff > 0)[0]   # 0→1 transitions (outage ends)
+        for s, e in zip(starts, ends):
+            outage_durations_h.append((e - s) * dt_h)
 
         if rep == n_replications - 1:
             system_up_last = system_up
@@ -174,13 +188,14 @@ def run(
     }
 
     return {
-        "A_sys_mean":     mean_A,
-        "A_sys_std":      std_A,
-        "A_sys_ci95":     (mean_A - ci_half, mean_A + ci_half),
-        "A_per_run":      A_per_run,
-        "time_grid":      time_grid,
-        "system_up_last": system_up_last,
-        "ws_avail_mean":  ws_avail_mean,
+        "A_sys_mean":        mean_A,
+        "A_sys_std":         std_A,
+        "A_sys_ci95":        (mean_A - ci_half, mean_A + ci_half),
+        "A_per_run":         A_per_run,
+        "time_grid":         time_grid,
+        "system_up_last":    system_up_last,
+        "ws_avail_mean":     ws_avail_mean,
+        "outage_durations_h": outage_durations_h,
     }
 
 

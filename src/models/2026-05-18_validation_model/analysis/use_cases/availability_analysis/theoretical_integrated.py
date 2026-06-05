@@ -20,20 +20,24 @@ Why this matters
 
 Integration method
 ------------------
-  beta  ~ Uniform[beta_min,  beta_max ]
-  lambda ~ Uniform[lam_min,   lam_max  ]
-  MTTR  ~ Uniform[mttr_min,  mttr_max ]
+  beta   ~ Uniform[beta_min,  beta_max]
+  lambda ~ Uniform[lam_min,   lam_max ]
 
-  For a fixed (beta, lambda) pair, E_MTTR[A_ws] has a closed-form solution:
+  MTTR is NOT integrated over its distribution.  Instead, the mean MTTR is
+  used directly in the denominator:
 
-    E_r[ MTTF / (MTTF + r) ]  for r ~ U[r_min, r_max]
-    = MTTF / (r_max - r_min) * ln( (MTTF + r_max) / (MTTF + r_min) )
+    A_ws(beta, lambda) = MTTF(beta, lambda) / (MTTF(beta, lambda) + E[MTTR])
 
-  This eliminates the MTTR dimension analytically, leaving a fast 2-D
-  numerical quadrature over (beta, lambda) on a regular grid.
+  This matches the Monte Carlo exactly: each simulated machine draws a fresh
+  repair duration per event, so over a long horizon its effective downtime per
+  cycle converges to the mean MTTR, not to a single random draw.  Integrating
+  A_ws over the MTTR distribution would instead model a machine whose repair
+  time is fixed for its entire lifetime — physically incorrect and a source of
+  a small upward bias via Jensen's inequality (A is convex in MTTR).
 
-  With GRID_N = 500 points per axis the integral converges to < 0.01pp
-  error (verified against a brute-force 3-D Monte Carlo).
+  The two remaining dimensions (beta, lambda) are integrated over a 500x500
+  grid.  With GRID_N = 500 points per axis the integral converges to < 0.01pp
+  error.
 
 Drop-in compatibility
 ---------------------
@@ -160,16 +164,17 @@ def _integrate_A_ws(
     mttr_min: float, mttr_max: float,
 ) -> float:
     """
-    Compute E[A_ws] by 2-D numerical quadrature over (beta, lambda),
-    with the MTTR dimension handled analytically.
+    Compute E[A_ws] by 2-D numerical quadrature over (beta, lambda).
 
-    For r ~ U[r_min, r_max] and fixed MTTF:
-        E_r[ MTTF / (MTTF + r) ] = MTTF / (r_max - r_min)
-                                    * ln( (MTTF + r_max) / (MTTF + r_min) )
+    MTTR is fixed at its mean value E[MTTR] = (mttr_min + mttr_max) / 2.
+    This matches the Monte Carlo, where each machine draws a fresh repair
+    duration per event and therefore experiences the mean MTTR over many
+    cycles — not a single random draw held for its lifetime.
 
-    When mttr_min == mttr_max (degenerate case), falls back to
-        E_r[ A_ws ] = MTTF / (MTTF + mttr_min).
+    A_ws(beta, lambda) = MTTF(beta, lambda) / (MTTF(beta, lambda) + E[MTTR])
     """
+    mttr_mean = (mttr_min + mttr_max) / 2
+
     betas   = np.linspace(beta_min, beta_max, GRID_N)
     lambdas = np.linspace(lam_min,  lam_max,  GRID_N)
 
@@ -180,12 +185,7 @@ def _integrate_A_ws(
     gamma_vals = np.array([math.gamma(1.0 + 1.0 / b) for b in betas])  # shape (GRID_N,)
     MTTF = L * gamma_vals[:, np.newaxis]   # broadcast: (GRID_N, GRID_N)
 
-    # E_MTTR[A_ws | MTTF]  — analytical integral over MTTR
-    if mttr_min == mttr_max:
-        A_ws_grid = MTTF / (MTTF + mttr_min)
-    else:
-        r_range   = mttr_max - mttr_min
-        A_ws_grid = (MTTF / r_range) * np.log((MTTF + mttr_max) / (MTTF + mttr_min))
+    A_ws_grid = MTTF / (MTTF + mttr_mean)
 
     # Average over the uniform (beta, lambda) grid
     return float(np.mean(A_ws_grid))

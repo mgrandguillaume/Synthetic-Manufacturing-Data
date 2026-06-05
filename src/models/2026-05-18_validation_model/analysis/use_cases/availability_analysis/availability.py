@@ -5,8 +5,11 @@ System availability analysis — theoretical vs experimental.
 Runs two independent estimates of steady-state system availability and
 compares them:
 
-  1. Theoretical  — exact RBD calculation using midpoint Weibull params.
-  2. Experimental — Monte Carlo simulation of Weibull failure-repair cycles.
+  1. Theoretical (integrated)  — exact RBD calculation using E[A_ws]
+                                  integrated over the full (β, λ) distributions
+                                  with mean MTTR.
+  2. Experimental              — Monte Carlo simulation of Weibull failure-repair
+                                  cycles.
 
 Both use the same factory topology (from gen_result) and the same failure
 configuration (from config.yaml).
@@ -17,11 +20,12 @@ Usage
 
 Output
 ------
-  Console  : summary table with theoretical, experimental, and divergence
+  Console  : summary table with theoretical (integrated), experimental, verdict
   Plotly   : three-panel figure:
                (1) Histogram of per-replication availability + theoretical line
-               (2) Component bottleneck chart (A_comp per component, sorted)
-               (3) System availability timeline (last replication)
+               (2) Outage duration distribution — histogram of system-down episode
+                   lengths across all replications, with mean annotation
+               (3) Monte Carlo convergence — cumulative A_sys vs replication count
 """
 
 import math
@@ -40,7 +44,7 @@ sys.path.insert(0, _MODEL_ROOT)
 from shared_utils import utils
 from shared_utils import validate_config
 from engine.generate.generate import generate_simple_assembly
-from . import theoretical, theoretical_integrated, experimental
+from . import theoretical_integrated, experimental
 from shared_utils import theme
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -49,7 +53,6 @@ _CONFIG_PATH = os.path.join(_MODEL_ROOT, "config.yaml")
 # Monte Carlo settings — increase n_replications for a tighter CI at the
 # cost of longer runtime (~1 min for 200 reps on a typical laptop).
 N_REPLICATIONS = 1000
-SEED           = 42
 
 # The simulation horizon and warm-up are scaled to the workstation MTTF rather
 # than hardcoded.  A fixed 2000 h horizon is meaningless across configs: it is
@@ -81,11 +84,10 @@ def _fmt_pct(v: float) -> str:
 def _divergence_verdict(theo: float, lo: float, hi: float) -> str:
     if lo <= theo <= hi:
         return "PASS - theoretical within 95% CI"
-    gap = min(abs(theo - lo), abs(theo - hi))
-    gap_pp = gap * 100
+    gap     = min(abs(theo - lo), abs(theo - hi))
+    gap_pp  = gap * 100
     if gap_pp < 3.0:
-        note = "(expected: Jensen's inequality bias from wide parameter ranges)"
-        return f"NEAR PASS - {gap_pp:.2f}pp outside CI  {note}"
+        return f"NEAR PASS - {gap_pp:.2f}pp outside CI"
     if gap_pp < 10.0:
         return f"DIVERGE - theoretical {gap_pp:.2f}pp outside CI  (check parameter ranges)"
     return f"FAIL - theoretical {gap_pp:.2f}pp outside CI  (likely a modelling error)"
@@ -98,6 +100,7 @@ def run() -> None:
     cfg = utils.load_config(_CONFIG_PATH)
     validate_config.validate(cfg)
 
+    seed     = cfg.get("metadata", {}).get("seed", 42)
     fail_cfg = cfg.get("failures", {})
     if not fail_cfg.get("enabled", False):
         print(
@@ -114,16 +117,18 @@ def run() -> None:
     n_ws       = sum(1 for w in gen_result["workstations"] if w.type == "production")
     print(f"  {n_ws} production workstations, {n_comps} producible components")
 
-    # ── Theoretical ───────────────────────────────────────────────────────────
-    print("\nComputing theoretical availability (midpoint)...")
-    theo_mid = theoretical.compute(gen_result, fail_cfg)
-
-    print("Computing theoretical availability (integrated)...")
+    # ── Theoretical (integrated) ──────────────────────────────────────────────
+    print("\nComputing theoretical availability (integrated)...")
     theo_int = theoretical_integrated.compute(gen_result, fail_cfg)
 
-    # ── Scale the simulation horizon to the MTTF (fix: no hardcoded horizon) ──
-    mttf_h        = theo_mid["MTTF_h"]
-    mttr_min      = float(fail_cfg["mttr"][0])
+    # ── Scale the simulation horizon to the MTTF ──────────────────────────────
+    # Compute MTTF at midpoint params inline (no need for the midpoint estimator).
+    beta_rep   = (float(fail_cfg["weibull_beta"][0])   + float(fail_cfg["weibull_beta"][1]))   / 2
+    lambda_rep = (float(fail_cfg["weibull_lambda"][0]) + float(fail_cfg["weibull_lambda"][1])) / 2
+    mttr_rep   = (float(fail_cfg["mttr"][0])           + float(fail_cfg["mttr"][1]))           / 2
+    mttf_h     = lambda_rep * math.gamma(1.0 + 1.0 / beta_rep)
+    mttr_min   = float(fail_cfg["mttr"][0])
+
     warmup_hours  = WARMUP_MTTF_MULT * mttf_h
     horizon_hours = warmup_hours + HORIZON_MTTF_MULT * mttf_h
 
@@ -147,7 +152,7 @@ def run() -> None:
         horizon_hours  = horizon_hours,
         warmup_hours   = warmup_hours,
         n_timepoints   = n_timepoints,
-        seed           = SEED,
+        seed           = seed,
     )
     print("  Done.")
 
@@ -158,38 +163,33 @@ def run() -> None:
     print("  SYSTEM AVAILABILITY ANALYSIS")
     _print_separator("=")
 
-    print(f"\n  Weibull parameters")
-    print(f"    beta          = {theo_mid['beta_rep']:.3f}  (range {fail_cfg['weibull_beta']})")
-    print(f"    lambda        = {theo_mid['lambda_rep']:.1f} h  (range {fail_cfg['weibull_lambda']})")
-    print(f"    MTTF          = {theo_mid['MTTF_h']:.2f} h  per workstation  (at midpoint)")
-    print(f"    MTTR          = {theo_mid['MTTR_h']:.2f} h  per workstation  (midpoint)")
-    print(f"    A_ws midpoint = {_fmt_pct(theo_mid['A_ws'])}")
-    print(f"    A_ws integrated = {_fmt_pct(theo_int['A_ws'])}")
+    print(f"\n  Weibull parameters  (midpoint values used for MTTF scaling)")
+    print(f"    beta     = {beta_rep:.3f}  (range {fail_cfg['weibull_beta']})")
+    print(f"    lambda   = {lambda_rep:.1f} h  (range {fail_cfg['weibull_lambda']})")
+    print(f"    MTTF     = {mttf_h:.2f} h  per workstation")
+    print(f"    mean MTTR = {mttr_rep:.2f} h  per workstation")
+    print(f"    A_ws (integrated E[A_ws]) = {_fmt_pct(theo_int['A_ws'])}")
 
     _print_separator()
-    print(f"  {'':30s}  {'Midpoint':>10s}  {'Integrated':>10s}  {'Experimental':>12s}")
+    print(f"  {'':30s}  {'Integrated':>10s}  {'Experimental':>12s}")
     _print_separator()
     print(
         f"  {'System availability  A_sys':30s}  "
-        f"{_fmt_pct(theo_mid['A_sys']):>10s}  "
         f"{_fmt_pct(theo_int['A_sys']):>10s}  "
         f"{_fmt_pct(exp['A_sys_mean']):>12s}"
     )
     print(
         f"  {'95% CI (experimental)':30s}  "
         f"{'--':>10s}  "
-        f"{'--':>10s}  "
         f"[{_fmt_pct(ci_lo)}, {_fmt_pct(ci_hi)}]"
     )
     print(
         f"  {'Std dev (across runs)':30s}  "
         f"{'--':>10s}  "
-        f"{'--':>10s}  "
         f"{_fmt_pct(exp['A_sys_std']):>12s}"
     )
     _print_separator()
-    print(f"  Verdict (midpoint):   {_divergence_verdict(theo_mid['A_sys'], ci_lo, ci_hi)}")
-    print(f"  Verdict (integrated): {_divergence_verdict(theo_int['A_sys'], ci_lo, ci_hi)}")
+    print(f"  Verdict: {_divergence_verdict(theo_int['A_sys'], ci_lo, ci_hi)}")
     _print_separator()
 
     print(f"\n  Top 5 weakest components (bottlenecks):")
@@ -205,28 +205,24 @@ def run() -> None:
     _print_separator("=")
 
     # ── Visualisation ─────────────────────────────────────────────────────────
-    _show_plots(theo_mid, theo_int, exp, gen_result,
+    _show_plots(theo_int, exp, gen_result,
                 n_replications=N_REPLICATIONS).show()
 
 
-def _show_plots(theo_mid: dict, theo_int: dict, exp: dict, gen_result: dict,
+def _show_plots(theo_int: dict, exp: dict, gen_result: dict,
                 n_replications: int | None = None):
-    """Build and display a three-panel Plotly figure."""
+    """Build and return a three-panel Plotly figure."""
 
-    # Colour aliases for the two theoretical lines
-    COL_MID = theme.STATE_COLORS["setup"]    # amber — midpoint
-    COL_INT = theme.STATE_COLORS["failed"]   # red   — integrated
+    COL_INT = theme.STATE_COLORS["failed"]   # red — integrated theoretical
 
     fig = make_subplots(
-        rows=2, cols=2,
-        specs=[[{"colspan": 2}, None], [{}, {}]],
+        rows=3, cols=1,
         subplot_titles=[
             "(1) Per-replication availability distribution",
-            "(2) Component bottleneck analysis  (A_comp)",
-            "(3) System availability over time  (last replication)",
+            "(2) Outage duration distribution  (all replications)",
+            "(3) Monte Carlo convergence",
         ],
-        vertical_spacing=0.14,
-        horizontal_spacing=0.10,
+        vertical_spacing=0.10,
     )
 
     ci_lo, ci_hi = exp["A_sys_ci95"]
@@ -243,15 +239,13 @@ def _show_plots(theo_mid: dict, theo_int: dict, exp: dict, gen_result: dict,
         hovertemplate="Availability: %{x:.4f}<br>Count: %{y}<extra></extra>",
     ), row=1, col=1)
 
-    # Experimental mean
     fig.add_vline(
         x=exp["A_sys_mean"], row=1, col=1,
         line=dict(color=theme.STATE_COLORS["processing"], width=2.5, dash="solid"),
-        annotation_text=f"Exp. mean: {exp['A_sys_mean']*100:.3f}%",
+        annotation_text=f"MC mean: {exp['A_sys_mean']*100:.3f}%",
         annotation_font=dict(color=theme.STATE_COLORS["processing"], size=10),
         annotation_position="top right",
     )
-    # 95% CI bounds
     for x_ci, label, pos in [
         (ci_lo, f"CI lo: {ci_lo*100:.3f}%", "bottom left"),
         (ci_hi, f"CI hi: {ci_hi*100:.3f}%", "bottom right"),
@@ -263,140 +257,102 @@ def _show_plots(theo_mid: dict, theo_int: dict, exp: dict, gen_result: dict,
             annotation_font=dict(color=theme.SUBTEXT, size=9),
             annotation_position=pos,
         )
-    # Midpoint theoretical
-    fig.add_vline(
-        x=theo_mid["A_sys"], row=1, col=1,
-        line=dict(color=COL_MID, width=2, dash="dash"),
-        annotation_text=f"Midpoint: {theo_mid['A_sys']*100:.3f}%",
-        annotation_font=dict(color=COL_MID, size=10),
-        annotation_position="top left",
-    )
-    # Integrated theoretical
     fig.add_vline(
         x=theo_int["A_sys"], row=1, col=1,
         line=dict(color=COL_INT, width=2, dash="dash"),
-        annotation_text=f"Integrated: {theo_int['A_sys']*100:.3f}%",
+        annotation_text=f"Theoretical: {theo_int['A_sys']*100:.3f}%",
         annotation_font=dict(color=COL_INT, size=10),
-        annotation_position="bottom left",
+        annotation_position="top left",
     )
 
-    # ── (2) Component bottleneck bar chart ────────────────────────────────────
-    # Use integrated theoretical for per-component values (more accurate A_ws)
-    sorted_comps = sorted(theo_int["A_per_component"].items(), key=lambda kv: kv[1])
-
-    comp_n_producers = {}
-    for c in gen_result["configurations"]:
-        comp_n_producers[c.component] = comp_n_producers.get(c.component, 0) + 1
-
-    bar_colors = []
-    for comp_id, _ in sorted_comps:
-        n = comp_n_producers.get(comp_id, 0)
-        if n == 1:
-            bar_colors.append(theme.STATE_COLORS["failed"])     # red  — SPOF
-        elif n == 2:
-            bar_colors.append(theme.STATE_COLORS["setup"])      # amber — limited redundancy
-        else:
-            bar_colors.append(theme.STATE_COLORS["processing"]) # blue  — good redundancy
-
-    fig.add_trace(go.Bar(
-        x=[c for c, _ in sorted_comps],
-        y=[a for _, a in sorted_comps],
-        marker_color=bar_colors,
-        marker_line_width=0,
-        showlegend=False,
-        hovertemplate=(
-            "<b>%{x}</b><br>"
-            "A_comp: %{y:.5f}<br>"
-            "%{y:.3%}<extra></extra>"
-        ),
-    ), row=2, col=1)
-
-    # Both theoretical system lines
-    fig.add_hline(
-        y=theo_mid["A_sys"], row=2, col=1,
-        line=dict(color=COL_MID, width=1.5, dash="dot"),
-        annotation_text=f"Midpoint {theo_mid['A_sys']*100:.3f}%",
-        annotation_font=dict(color=COL_MID, size=9),
-        annotation_position="top right",
-    )
-    fig.add_hline(
-        y=theo_int["A_sys"], row=2, col=1,
-        line=dict(color=COL_INT, width=1.5, dash="dot"),
-        annotation_text=f"Integrated {theo_int['A_sys']*100:.3f}%",
-        annotation_font=dict(color=COL_INT, size=9),
-        annotation_position="bottom right",
-    )
-
-    for label, color in [
-        ("1 producer (SPOF)",  theme.STATE_COLORS["failed"]),
-        ("2 producers",        theme.STATE_COLORS["setup"]),
-        ("3+ producers",       theme.STATE_COLORS["processing"]),
-    ]:
-        fig.add_trace(go.Bar(
-            x=[None], y=[None],
-            name=label,
-            marker_color=color,
-            showlegend=True,
+    # ── (2) Outage duration distribution ─────────────────────────────────────
+    outage_h = exp.get("outage_durations_h", [])
+    if outage_h:
+        mean_outage = float(np.mean(outage_h))
+        fig.add_trace(go.Histogram(
+            x=outage_h,
+            nbinsx=40,
+            name="Outage durations",
+            marker_color=theme.STATE_COLORS["failed"],
+            marker_line_color=theme.BG,
+            marker_line_width=0.5,
+            opacity=0.85,
+            showlegend=False,
+            hovertemplate="Duration: %{x:.2f} h<br>Count: %{y}<extra></extra>",
         ), row=2, col=1)
+        fig.add_vline(
+            x=mean_outage, row=2, col=1,
+            line=dict(color=theme.STATE_COLORS["failed"], width=2, dash="dash"),
+            annotation_text=f"Mean outage: {mean_outage:.2f} h",
+            annotation_font=dict(color=theme.STATE_COLORS["failed"], size=10),
+            annotation_position="top right",
+        )
+    else:
+        # No outages recorded — factory is always up
+        fig.add_annotation(
+            text="No system outages recorded across all replications",
+            xref="x2", yref="y2", x=0.5, y=0.5,
+            showarrow=False,
+            font=dict(color=theme.SUBTEXT, size=13),
+        )
 
-    # ── (3) System availability timeline (last replication) ───────────────────
-    time_grid = exp["time_grid"]
-    system_up = exp["system_up_last"]
+    # ── (3) Monte Carlo convergence ───────────────────────────────────────────
+    # Shows how the cumulative mean A_sys evolves as more replications are added,
+    # together with a narrowing 95% CI band and the theoretical reference line.
+    A_arr    = np.array(exp["A_per_run"])
+    n_runs   = np.arange(1, len(A_arr) + 1)
+    cum_mean = np.cumsum(A_arr) / n_runs
 
+    # Running standard deviation via the online variance formula
+    cum_sq_mean = np.cumsum(A_arr ** 2) / n_runs
+    cum_var     = np.maximum(cum_sq_mean - cum_mean ** 2, 0.0)
+    cum_std     = np.sqrt(cum_var)
+    ci_half     = 1.96 * cum_std / np.sqrt(n_runs)
+    conv_lo     = cum_mean - ci_half
+    conv_hi     = cum_mean + ci_half
+
+    # CI band (shaded)
     fig.add_trace(go.Scatter(
-        x=time_grid,
-        y=system_up.astype(float),
-        mode="lines",
-        line=dict(color=theme.STATE_COLORS["processing"], width=1.2, shape="hv"),
-        fill="tozeroy",
-        fillcolor="rgba(88,166,255,0.15)",
-        name="System up",
+        x=np.concatenate([n_runs, n_runs[::-1]]),
+        y=np.concatenate([conv_hi, conv_lo[::-1]]),
+        fill="toself",
+        fillcolor="rgba(88,166,255,0.12)",
+        line=dict(width=0),
         showlegend=False,
-        hovertemplate="t = %{x:.1f} h<br>%{y:.0f} (1=up, 0=down)<extra></extra>",
-    ), row=2, col=2)
+        hoverinfo="skip",
+        name="95% CI band",
+    ), row=3, col=1)
 
-    window = max(1, len(time_grid) // 100)
-    rolling_avail = np.convolve(
-        system_up.astype(float),
-        np.ones(window) / window,
-        mode="same",
-    )
+    # Cumulative mean line
     fig.add_trace(go.Scatter(
-        x=time_grid,
-        y=rolling_avail,
+        x=n_runs,
+        y=cum_mean,
         mode="lines",
-        name=f"Rolling avg (window={window})",
+        name="Cumulative MC mean",
         line=dict(color=theme.STATE_COLORS["processing"], width=2),
-        showlegend=True,
-        hovertemplate="t = %{x:.1f} h<br>Rolling A = %{y:.4f}<extra></extra>",
-    ), row=2, col=2)
+        hovertemplate="Run %{x}<br>Cumulative A_sys = %{y:.5f}<extra></extra>",
+    ), row=3, col=1)
 
-    # Both theoretical lines on the timeline
+    # Theoretical reference line
     fig.add_hline(
-        y=theo_mid["A_sys"], row=2, col=2,
-        line=dict(color=COL_MID, width=1.5, dash="dash"),
-        annotation_text=f"Midpoint {theo_mid['A_sys']*100:.3f}%",
-        annotation_font=dict(color=COL_MID, size=9),
-        annotation_position="top right",
-    )
-    fig.add_hline(
-        y=theo_int["A_sys"], row=2, col=2,
+        y=theo_int["A_sys"], row=3, col=1,
         line=dict(color=COL_INT, width=1.5, dash="dash"),
-        annotation_text=f"Integrated {theo_int['A_sys']*100:.3f}%",
+        annotation_text=f"Theoretical {theo_int['A_sys']*100:.3f}%",
         annotation_font=dict(color=COL_INT, size=9),
-        annotation_position="bottom right",
+        annotation_position="top right",
     )
 
     # ── Layout ────────────────────────────────────────────────────────────────
+    n_reps = n_replications or N_REPLICATIONS
     fig.update_layout(
         paper_bgcolor=theme.BG,
         plot_bgcolor=theme.BG,
         font=dict(color=theme.TEXT, family="Inter, system-ui, sans-serif", size=12),
-        height=900,
+        height=1050,
         title=dict(
             text=(
                 "System Availability Analysis — "
-                f"Theoretical vs Monte Carlo ({n_replications or N_REPLICATIONS} replications)"
+                f"Theoretical vs Monte Carlo  ({n_reps} replications)"
             ),
             font=dict(size=18, color=theme.TEXT),
             x=0.02, y=0.99,
@@ -412,14 +368,12 @@ def _show_plots(theo_mid: dict, theo_int: dict, exp: dict, gen_result: dict,
 
     theme.apply_axis_style(fig)
 
-    fig.update_xaxes(title_text="System availability  A_sys",  row=1, col=1)
-    fig.update_yaxes(title_text="Number of replications",      row=1, col=1)
-    fig.update_xaxes(title_text="Component",  tickangle=45,    row=2, col=1,
-                     tickfont=dict(size=8))
-    fig.update_yaxes(title_text="A_comp  (availability)",      row=2, col=1)
-    fig.update_xaxes(title_text="Time (h)",                    row=2, col=2)
-    fig.update_yaxes(title_text="Available  (1 = yes, 0 = no)",
-                     range=[-0.05, 1.1],                       row=2, col=2)
+    fig.update_xaxes(title_text="System availability  A_sys",      row=1, col=1)
+    fig.update_yaxes(title_text="Number of replications",          row=1, col=1)
+    fig.update_xaxes(title_text="Outage duration  (hours)",        row=2, col=1)
+    fig.update_yaxes(title_text="Count",                           row=2, col=1)
+    fig.update_xaxes(title_text="Number of replications",          row=3, col=1)
+    fig.update_yaxes(title_text="Cumulative A_sys",                row=3, col=1)
 
     for ann in fig.layout.annotations:
         if ann.text and ann.text[:1] == "(":

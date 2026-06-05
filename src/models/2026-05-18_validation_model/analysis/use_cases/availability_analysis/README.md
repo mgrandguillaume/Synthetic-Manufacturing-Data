@@ -4,7 +4,7 @@ This use case answers a single question:
 
 > **Given that every production workstation runs under continuous mechanical load, what fraction of time is the factory able to produce every component in its bill of materials?**
 
-This metric is called **steady-state system availability** (A_sys). It is computed in three independent ways and the results are compared to validate the approach.
+This metric is called **steady-state system availability** (A_sys). It is computed in two independent ways — theoretical and experimental — and the results are compared to validate the approach.
 
 ---
 
@@ -14,7 +14,7 @@ This metric is called **steady-state system availability** (A_sys). It is comput
 2. [Output](#2-output)
 3. [Files](#3-files)
 4. [How Theoretical Availability is Calculated](#4-how-theoretical-availability-is-calculated)
-5. [Methodology — Three Approaches](#5-methodology--three-approaches)
+5. [Methodology — Two Approaches](#5-methodology--two-approaches)
 6. [Tunable Parameters](#6-tunable-parameters)
 7. [Config.yaml Keys](#7-configyaml-keys)
 8. [Understanding the Results](#8-understanding-the-results)
@@ -23,7 +23,7 @@ This metric is called **steady-state system availability** (A_sys). It is comput
 
 ## 1. How to Run
 
-**Via the UI (recommended):** open the **Availability** page in the Streamlit app (`streamlit run ui/home.py`). Set the number of replications, horizon, and warm-up period in the UI, then click **Run availability analysis**. Results and charts appear on the same page.
+**Via the UI (recommended):** open the **Availability** page in the Dash app. Set the number of replications, then click **Run availability analysis**. The simulation horizon and warm-up period are scaled automatically to the configured MTTF — no manual tuning required.
 
 **Standalone:** from the model root:
 
@@ -31,7 +31,7 @@ This metric is called **steady-state system availability** (A_sys). It is comput
 python -m analysis.use_cases.availability_analysis.availability
 ```
 
-**Expected runtime:** ~5 minutes for 1000 Monte Carlo replications on a typical laptop. The two theoretical calculations complete in under a second.
+**Expected runtime:** ~5 minutes for 1000 Monte Carlo replications on a typical laptop. The theoretical calculation completes in under a second.
 
 ---
 
@@ -39,15 +39,14 @@ python -m analysis.use_cases.availability_analysis.availability
 
 ### Console
 
-A formatted table is printed with three columns:
+A formatted table is printed with two columns:
 
 ```
-                                  Midpoint   Integrated  Experimental
-System availability  A_sys         74.890%     73.214%       71.803%
-95% CI (experimental)                  --          --   [71.567%, 72.039%]
-Std dev (across runs)                  --          --         3.819%
-Verdict (midpoint):   NEAR PASS - 2.84pp outside CI ...
-Verdict (integrated): PASS - theoretical within 95% CI
+                                  Integrated  Experimental
+System availability  A_sys           73.214%       71.803%
+95% CI (experimental)                    --   [71.567%, 72.039%]
+Std dev (across runs)                    --         3.819%
+Verdict: PASS - theoretical within 95% CI
 ```
 
 Followed by the five weakest components (lowest A_comp), useful for identifying bottlenecks.
@@ -58,9 +57,9 @@ Three panels open in the browser:
 
 | Panel | What it shows |
 |---|---|
-| **(1) Histogram** | Distribution of per-replication system availability across all Monte Carlo runs. Vertical lines mark the experimental mean, 95% CI bounds, and both theoretical values. |
-| **(2) Bottleneck chart** | Per-component marginal availability (A_comp), sorted weakest-first. Bars are coloured red (1 producer = single point of failure), amber (2 producers), blue (3+). Horizontal lines mark both theoretical A_sys values. |
-| **(3) Timeline** | System up/down state (0 or 1) over time for the last Monte Carlo replication, with a rolling average overlay and both theoretical reference lines. |
+| **(1) Histogram** | Distribution of per-replication system availability across all Monte Carlo runs. Vertical lines mark the experimental mean, 95% CI bounds, and the theoretical value. |
+| **(2) Outage duration distribution** | Histogram of system-down episode lengths (in hours) accumulated across all replications. A dashed line marks the mean outage duration. Shows how long typical failures last and whether the distribution is skewed toward short or long outages. |
+| **(3) Monte Carlo convergence** | Cumulative mean A_sys as a function of replication count, with a narrowing 95% CI band and a theoretical reference line. Confirms how many replications are needed for the estimate to stabilise. |
 
 ---
 
@@ -68,10 +67,11 @@ Three panels open in the browser:
 
 | File | Role |
 |---|---|
-| `availability.py` | Entry point. Orchestrates generation, both theoretical calculations, Monte Carlo, console report, and Plotly figure. Tune runtime constants here. |
-| `theoretical.py` | Closed-form availability using **midpoint** Weibull parameters. Uses exact 2^N workstation-state enumeration for the system-level calculation. |
-| `theoretical_integrated.py` | Same topology logic, but computes **E[A_ws] via 2-D numerical quadrature** over the full parameter distributions instead of the midpoint. More accurate when parameter ranges are wide. |
-| `experimental.py` | Monte Carlo simulation. Samples Weibull failure-repair cycles for every workstation, builds a boolean availability matrix, and measures the fraction of time the system is up. |
+| `availability.py` | Entry point. Orchestrates generation, theoretical calculation, Monte Carlo, console report, and Plotly figure. Runtime constants are defined here. |
+| `theoretical_integrated.py` | Computes **E[A_ws] via 2-D numerical quadrature** over the full (β, λ) distributions with mean MTTR. Used as the single theoretical reference. |
+| `experimental.py` | Monte Carlo simulation. Samples Weibull failure-repair cycles, builds a boolean availability matrix, measures system uptime, and records outage durations. |
+| `_rbd.py` | Shared RBD solver. Implements exact 2^N workstation-state enumeration (≤22 workstations) and Monte Carlo fallback (>22), used by both theoretical modules. |
+| `theoretical.py` | Midpoint estimator (reference only). Uses the midpoint of each parameter range rather than integrating over the full distribution. Not used in the default analysis output; kept for comparison. |
 
 ---
 
@@ -81,101 +81,72 @@ The factory is modelled as a **reliability block diagram (RBD)** with two levels
 
 ### Step 1 — Per-workstation availability (A_ws)
 
-Each workstation is modelled as a **Weibull** wear-out process. Using the midpoint of the configured ranges (β = 2.25, λ = 35 h, MTTR = 2.25 h):
+Each workstation is modelled as a **Weibull** wear-out process. The expected availability is computed by integrating over the full (β, λ) distribution with the mean MTTR:
 
 ```
-MTTF = λ · Γ(1 + 1/β)
-     = 35 · Γ(1.444)
-     = 35 · 0.886
-     ≈ 31.0 h
+MTTF(β, λ) = λ · Γ(1 + 1/β)
 
-A_ws = MTTF / (MTTF + MTTR)
-     = 31.0 / (31.0 + 2.25)
-     ≈ 93.2%
+A_ws(β, λ) = MTTF(β, λ) / (MTTF(β, λ) + E[MTTR])
+
+E[A_ws] = average of A_ws(β, λ) over a 500×500 grid spanning
+          [β_min, β_max] × [λ_min, λ_max]
 ```
 
-Interpretation: each workstation is operational **93.2%** of the time.
+Using E[MTTR] (the mean repair time) in the denominator matches the Monte Carlo, where each machine draws a fresh MTTR per repair event and therefore experiences the mean MTTR over a long horizon.
 
 ### Step 2 — Per-component availability (parallel OR gate)
 
-A component can be produced as long as **at least one** of its capable workstations is up. The failure of k independent workstations must occur simultaneously for the component to be unavailable:
+A component can be produced as long as **at least one** of its capable workstations is up:
 
 ```
-A_comp = 1 - (1 - A_ws)^k
+A_comp = 1 - (1 - E[A_ws])^k
 ```
 
-| Producers (k) | Calculation | A_comp |
-|---|---|---|
-| 1 (SPOF) | 1 - (0.068)^1 | **93.2%** |
-| 2 | 1 - (0.068)^2 | **99.5%** |
-| 6 | 1 - (0.068)^6 | **~100.0%** |
+| Producers (k) | A_comp (example with E[A_ws] = 93.2%) |
+|---|---|
+| 1 (SPOF) | **93.2%** |
+| 2 | **99.5%** |
+| 6 | **~100.0%** |
 
-A component with a single producer is a **Single Point of Failure (SPOF)** — the entire system goes down whenever that one workstation fails.
+A component with a single producer is a **Single Point of Failure (SPOF)** — the entire system goes down whenever that workstation fails.
 
 ### Step 3 — System availability (series AND gate, exact)
 
-The system is available only when **every** component is simultaneously producible. A naive approach multiplies all A_comp values together:
-
-```
-A_sys ≈ A_comp_1 × A_comp_2 × ... × A_comp_N   ← WRONG when workstations are shared
-```
-
-This is **incorrect** when the same workstation produces multiple components. For example, if WS_1 is the sole producer for six level-1 components, its failure takes all six down at once — but the product formula counts it as six independent events, heavily underestimating A_sys.
-
-The correct approach enumerates all **2^N workstation states** (up/down combinations) and sums the probability of every state where all components are covered:
+The system is available only when **every** component is simultaneously producible. Because workstations can be shared across components, a naive product formula is incorrect. The correct approach enumerates all **2^N workstation states** and sums the probability of every state where all components are covered:
 
 ```
 A_sys = Σ  P(state) · 1[system available in state]
        states
 
-P(state) = A_ws^(# up) · (1 - A_ws)^(# down)
+P(state) = E[A_ws]^(# up) · (1 - E[A_ws])^(# down)
 ```
 
-For the current factory (14 workstations), this means 2^14 = 16,384 states — computed in milliseconds.
-
-**Concrete example** with the current config (A_ws = 93.2%):
-
-The factory reduces to four independent SPOF constraints (WS_1, WS_2, WS_3, WS_5), one 6-fold parallel group (COMP_L4), and two correlated parallel groups sharing WS_12 (PROD_1 and PROD_2):
-
-```
-A_sys = A_ws^4
-      × (1 - (1-A_ws)^6)
-      × (1 - 2·(1-A_ws)^2 + (1-A_ws)^3)
-
-      = 0.932^4
-      × (1 - 0.068^6)
-      × (1 - 2·0.068^2 + 0.068^3)
-
-      = 0.755 × ~1.000 × 0.991
-      ≈ 74.9%
-```
+For up to 22 workstations this is solved exactly. For larger factories a Monte Carlo approximation is used (see `_rbd.py`).
 
 ---
 
-## 5. Methodology — Three Approaches
-
-### Midpoint theoretical (`theoretical.py`)
-
-Uses the midpoint of each parameter range as a single representative value (e.g. λ_mid = 35 h). Fast and simple, but introduces a systematic bias when parameter ranges are wide: because A_ws is a **concave function of λ**, the average A_ws over the full range is lower than A_ws at the midpoint (*Jensen's inequality*). The midpoint method therefore tends to **overestimate** A_sys.
+## 5. Methodology — Two Approaches
 
 ### Integrated theoretical (`theoretical_integrated.py`)
 
-Computes the true **E[A_ws]** by numerical quadrature over the full joint distribution of (β, λ, MTTR):
+Computes **E[A_ws]** by 2-D numerical quadrature over the full joint distribution of (β, λ) on a 500×500 grid:
 
 ```
-E[A_ws] = ∫∫ E_MTTR[ MTTF(β,λ) / (MTTF(β,λ) + MTTR) ] · f(β) · f(λ) dβ dλ
+E[A_ws] = (1/N²) Σ_{i,j}  MTTF(β_i, λ_j) / (MTTF(β_i, λ_j) + E[MTTR])
 ```
 
-The MTTR dimension is solved analytically (log integral), leaving a 500×500 grid evaluation over (β, λ). This corrects the Jensen's inequality bias and produces a result much closer to the Monte Carlo ground truth.
+Mean MTTR is used directly in the denominator rather than integrating over the MTTR distribution. This is the physically correct choice: in the Monte Carlo, each machine undergoes many repairs over the horizon, drawing a fresh repair time each time, so the per-machine long-run downtime converges to the mean MTTR. Integrating availability over the MTTR distribution would instead model a machine whose repair time is fixed for its entire lifetime — which is not what the simulation does.
+
+This method corrects the Jensen's inequality bias of the midpoint estimator and produces results that agree closely with the Monte Carlo ground truth.
 
 ### Experimental Monte Carlo (`experimental.py`)
 
 For each of N replications:
 1. Each workstation is assigned its own randomly sampled (β_i, λ_i) from the configured ranges.
 2. A failure-repair sequence is simulated: the machine runs until a Weibull-drawn TTF elapses, fails, is repaired after a uniform MTTR, then repeats — for the full horizon.
-3. A boolean matrix `ws_failed[workstation, timepoint]` is built on a 5,000-point time grid.
+3. A boolean matrix `ws_failed[workstation, timepoint]` is built on an adaptive time grid fine enough to resolve the shortest possible repair (at least 5 grid points per minimum MTTR window, minimum 5 000 points).
 4. The system is up at a timepoint iff every component has at least one non-failed capable workstation.
-5. The fraction of up-timepoints = replication availability.
+5. The fraction of up-timepoints = replication availability. All consecutive system-down episodes are also recorded for the outage duration distribution.
 
 The mean and 95% CI across replications are the experimental estimate. This is the ground truth — it makes no closed-form approximations.
 
@@ -185,17 +156,19 @@ The mean and 95% CI across replications are the experimental estimate. This is t
 
 ## 6. Tunable Parameters
 
-When running via the UI, **Replications**, **Horizon (h)**, and **Warm-up (h)** are set directly on the Availability page — no file editing required.
+**Via the UI:** only **Replications** is exposed — the horizon and warm-up are computed automatically from the MTTF (see below).
 
-When running standalone, these constants are at the top of `availability.py`:
+**Standalone (`availability.py`):**
 
 | Constant | Default | Effect |
 |---|---|---|
 | `N_REPLICATIONS` | 1000 | More replications → narrower CI. 200 ≈ ±0.5pp, 1000 ≈ ±0.24pp. Scales runtime linearly. |
-| `HORIZON_HOURS` | 2000 | Simulated hours per replication. Should be >> MTTF so many failure cycles are observed. |
-| `WARMUP_HOURS` | 200 | Hours discarded from the start of each replication. Should be ~3–4× MTTF to reach steady state. |
-| `N_TIMEPOINTS` | 5000 | Evaluation points per replication. Higher = smoother timeline in panel (3). |
-| `SEED` | 42 | RNG seed. Change to get a different (but equally valid) sample. |
+| `WARMUP_MTTF_MULT` | 4.0 | Warm-up = this multiplier × MTTF. Discards the initial transient before steady state. |
+| `HORIZON_MTTF_MULT` | 50.0 | Measurement window = this multiplier × MTTF after warm-up. Ensures many failure-repair cycles. |
+| `POINTS_PER_MIN_MTTR` | 5 | Minimum grid points inside one minimum-MTTR window. Prevents short outages from falling between grid points. |
+| `N_TIMEPOINTS_FLOOR` | 5 000 | Minimum number of time-grid points regardless of horizon length. |
+
+The simulation seed is taken from `metadata.seed` in `config.yaml`, so all runs at the same seed are reproducible.
 
 ---
 
@@ -222,44 +195,25 @@ failures:
 | Label | Meaning |
 |---|---|
 | `PASS` | Theoretical value falls inside the experimental 95% CI — excellent agreement. |
-| `NEAR PASS` | Within ~3pp of the CI. Expected when parameter ranges are wide (Jensen's inequality). |
+| `NEAR PASS` | Within ~3pp of the CI. May indicate a wide parameter range or high replication count making the CI very narrow. |
 | `DIVERGE` | 3–10pp outside CI. Check whether parameter ranges are unusually wide. |
 | `FAIL` | >10pp outside CI. Likely a topology mismatch or modelling error. |
 
-### Residual gap between integrated theoretical and experimental
+### Expected agreement between theoretical and experimental
 
-You will often see the integrated theoretical value land **just outside** the experimental 95% CI (e.g. integrated 36.0% vs an experimental mean of 35.6% with a CI of roughly ±0.1pp). This looks alarming but is expected, and it has two distinct causes.
+The integrated method uses mean MTTR in the denominator — which matches exactly how the simulation accumulates downtime over many repair events. The remaining difference between the two methods comes only from:
 
-**Cause 1 — the CI is razor-thin at high replication counts.** The CI half-width shrinks as `1.96·σ/√N`. With N = 2000 replications and σ ≈ 2.7pp, the half-width is only about **±0.12pp**. At that resolution, *any* systematic gap larger than ~0.1pp falls outside the interval. So "outside the CI" here means "different by a few tenths of a percentage point", not "wrong". The verdict will read `NEAR PASS`.
+- **Monte Carlo sampling variance** — the experimental result is itself a random estimate with a 95% CI. With 1000 replications the CI half-width is roughly ±0.12pp (at σ ≈ 2pp), so the theoretical value must agree to that level of precision.
+- **Per-workstation (β_i, λ_i) heterogeneity** — the Monte Carlo assigns each workstation its own independent draw from the parameter ranges, while the theoretical method computes a single integrated E[A_ws] shared by all workstations. When the factory is large and parameter ranges are wide, this introduces a small discrepancy.
 
-**Cause 2 — a genuine, small bias in how MTTR is handled.** The multilinearity of the RBD means the integrated method correctly accounts for two of the three random dimensions:
+A `PASS` verdict is the expected outcome for most configurations. A `NEAR PASS` with a very narrow CI simply means the two estimates differ by a few tenths of a percentage point — within the expected modelling resolution.
 
-- **Up/down randomness** — the system function is multilinear, so averaging over up/down states is exact.
-- **β, λ heterogeneity** — each workstation draws (β, λ) *once* and keeps them for its whole life, and the draws are independent across workstations, so integrating A_ws over the (β, λ) distribution is exactly right.
+### Outage duration panel
 
-The **MTTR** dimension is the exception. In the Monte Carlo, each workstation undergoes *many* repairs over the horizon, and a fresh `MTTR ~ U[0.5, 4]` is drawn for **every repair**. Over a long run the machine therefore experiences the **mean** MTTR:
+Panel (2) shows the distribution of how long each system-down episode lasts, pooled across all replications. A right-skewed distribution (many short outages, few long ones) is typical when SPOF workstations fail independently. A bimodal distribution can indicate two distinct failure modes — for example, isolated workstation failures (short) versus cascading failures where multiple components lose their sole producer simultaneously (longer).
 
-```
-A_ws,i  →  MTTF_i / (MTTF_i + E[MTTR])          (experimental, E[MTTR] = 2.25 h)
-```
+The mean outage duration and its distribution together with A_sys give a fuller picture of reliability than availability alone: two factories with identical A_sys but different outage duration distributions have very different operational profiles.
 
-But the integrated method **integrates availability over the MTTR distribution**, treating each machine's repair time as a single random constant:
+### Convergence panel
 
-```
-A_ws,i  =  E_r[ MTTF_i / (MTTF_i + r) ]          (integrated)
-```
-
-Because `A = MTTF/(MTTF + r)` is **convex** in `r`, Jensen's inequality gives `E_r[A] ≥ A(E[r])`, so the integrated method sits slightly **above** the simulation. Numerically, at MTTF ≈ 31 h:
-
-```
-A(E[r])  = 31 / (31 + 2.25)                       = 0.9323
-E_r[A]   = (31 / 3.5) · ln(35 / 31.5)             = 0.9332     (+0.09pp per workstation)
-```
-
-Propagated through the ~15-workstation series-of-parallel RBD, that ~0.09pp per-workstation difference amplifies to the ~0.3–0.4pp gap you see at the system level — exactly the right direction and magnitude.
-
-**This is not a bug.** It reflects a defensible modelling choice: integrating availability over the per-repair MTTR distribution rather than using the long-run mean MTTR that a many-times-repaired machine actually experiences. If exact agreement with the Monte Carlo is desired, the integrated method should use the **mean MTTR** in the denominator (keeping the β, λ grid integration) instead of the analytic MTTR integral.
-
-### Bottleneck interpretation
-
-The bottleneck chart (panel 2) shows **marginal** per-component availability — how available each component would be in isolation. Components with one producer (red bars) are the weakest links. Adding a second capable workstation to a SPOF component raises its A_comp from ~93% to ~99.5% and can significantly lift A_sys.
+Panel (3) shows the cumulative mean A_sys as replications accumulate. The CI band narrows as 1/√N. Once the band is stable (flat) and narrow, additional replications add little information. For most configurations 200–500 replications is sufficient; the default of 1000 gives a conservatively tight estimate.

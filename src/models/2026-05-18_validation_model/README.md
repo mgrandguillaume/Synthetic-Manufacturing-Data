@@ -918,15 +918,14 @@ The `use_cases/` directory contains standalone analyses that run on top of the g
 **Entry point:** **Availability** page in the UI, or `python -m analysis.use_cases.availability_analysis.availability` standalone  
 **README:** [`analysis/use_cases/availability_analysis/README.md`](analysis/use_cases/availability_analysis/README.md)
 
-Compares three approaches to computing steady-state system availability for the generated factory:
+Compares two approaches to computing steady-state system availability for the generated factory:
 
 | Approach | Description |
 |---|---|
-| **Theoretical (midpoint)** | Weibull MTTF computed from the midpoint of each parameter range; exact 2^N workstation-state enumeration propagated through the factory's RBD topology |
-| **Theoretical (integrated)** | Same state enumeration, but E[A_ws] is evaluated by numerical integration over the full (β, λ, MTTR) parameter distributions — corrects for Jensen's inequality |
-| **Experimental** | Monte Carlo: 1 000 replications of the full Weibull failure–repair cycle, aggregated into an empirical availability distribution |
+| **Theoretical (integrated)** | E[A_ws] is computed by 2-D numerical quadrature over the full (β, λ) distributions using the mean MTTR, then propagated through the factory's RBD topology via exact 2^N workstation-state enumeration (or Monte Carlo for >22 workstations) |
+| **Experimental** | Monte Carlo: replications of the full Weibull failure–repair cycle on an adaptive time grid, aggregated into an empirical availability distribution and outage duration histogram |
 
-The script produces a three-panel figure (histogram of experimental replications with both theoretical lines; per-component availability bar chart; system-level summary) and prints a comparison table to stdout. See the use case README for a full explanation of the methodology and how to interpret the results.
+The simulation horizon and warm-up are scaled automatically to the workstation MTTF, so the analysis is well-conditioned across any configured parameter range. The script produces a three-panel figure (per-replication availability histogram; outage duration distribution; Monte Carlo convergence) and prints a comparison table to stdout. See the use case README for a full explanation of the methodology and how to interpret the results.
 
 ---
 
