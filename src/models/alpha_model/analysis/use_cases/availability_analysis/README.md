@@ -111,16 +111,26 @@ A component with a single producer is a **Single Point of Failure (SPOF)** — t
 
 ### Step 3 — System availability (series AND gate, exact)
 
-The system is available only when **every** component is simultaneously producible. Because workstations can be shared across components, a naive product formula is incorrect. The correct approach enumerates all **2^N workstation states** and sums the probability of every state where all components are covered:
+The system is available only when **every** component is simultaneously producible. A naive approach would multiply the per-component availabilities:
 
 ```
-A_sys = Σ  P(state) · 1[system available in state]
-       states
+A_sys_naive = A_comp_1 × A_comp_2 × … × A_comp_C
+```
+
+This is only correct when every component's availability is statistically independent of every other's — i.e. no workstation is shared across components. In practice this assumption is violated: a single workstation can be assigned to produce multiple components, so when it fails all of those components simultaneously lose a capable producer. The naive product treats each consequence as an independent event, effectively counting the same workstation failure once per component it affects, and therefore **underestimates** system availability.
+
+The correct approach enumerates all **2^N workstation states** and sums the probability of every state where all components are covered:
+
+```
+A_sys = Σ  P(state)
+       states where system is up
 
 P(state) = E[A_ws]^(# up) · (1 - E[A_ws])^(# down)
 ```
 
-For up to 22 workstations this is solved exactly. For larger factories a Monte Carlo approximation is used (see `_rbd.py`).
+Because the enumeration works at the workstation level, a shared workstation appears exactly once in each state, and its failure propagates simultaneously to all components that depend on it — correctly capturing the correlation.
+
+For up to 22 workstations this is solved exactly (~4.2 M states, completes in under a second). For larger factories a Monte Carlo fallback with 500,000 samples is used (see `_rbd.py`).
 
 ---
 

@@ -16,7 +16,7 @@ configuration (from config.yaml).
 
 Usage
 -----
-  uv run src/models/2026-05-18_validation_model/analysis/use_cases/availability_analysis/availability.py
+  uv run src/models/alpha_model/analysis/use_cases/availability_analysis/availability.py
 
 Output
 ------

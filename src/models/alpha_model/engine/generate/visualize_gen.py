@@ -29,7 +29,7 @@ Public API
 
 Standalone usage
 ----------------
-  uv run src/models/2026-05-18_validation_model/engine/generate/visualize_gen.py
+  uv run src/models/alpha_model/engine/generate/visualize_gen.py
   # writes gen_output/layout_graph.html and opens it in your browser
 
 Dependencies

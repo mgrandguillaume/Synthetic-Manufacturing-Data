@@ -62,59 +62,61 @@ configure, run, and analyse all of the above interactively in a browser.
 ```
 src/
 └── models/
-    ├── 2026-04-25_lopes_model/        # Baseline CLEMATIS implementation
-    │   ├── model_generator.py         # Original MN-RM graph generator (Lopes et al.)
-    │   ├── dynamic_manufacturing.py   # Original CLEMATIS DTS simulator (Lopes et al.)
-    │   ├── run.py                     # Wires generator → simulator → CSV output
-    │   ├── visualize_sim.py           # Machine state % chart
-    │   └── sim_output/
-    │       └── states.csv
+    ├── legacy_models/
+    │   ├── 2026-04-25_lopes_model/        # Baseline CLEMATIS implementation
+    │   │   ├── model_generator.py         # Original MN-RM graph generator (Lopes et al.)
+    │   │   ├── dynamic_manufacturing.py   # Original CLEMATIS DTS simulator (Lopes et al.)
+    │   │   ├── run.py                     # Wires generator → simulator → CSV output
+    │   │   ├── visualize_sim.py           # Machine state % chart
+    │   │   └── sim_output/
+    │   │       └── states.csv
+    │   │
+    │   ├── 2026-04-27_rafael_model/       # Julia reimplementation of the generator
+    │   │   ├── generate.jl
+    │   │   ├── config.yaml
+    │   │   └── output/
+    │   │
+    │   ├── 2026-04-28_python_model/       # Python BOM-based product-driven model
+    │   │   ├── config.yaml
+    │   │   ├── run.py
+    │   │   ├── generate/
+    │   │   ├── simulate/
+    │   │   ├── sweep/
+    │   │   └── theme.py
+    │   │
+    │   ├── 2026-04-29_combined_model/     # Stage-based layout with α parameter
+    │   │   ├── config.yaml
+    │   │   ├── run.py
+    │   │   ├── generate/
+    │   │   ├── simulate/
+    │   │   ├── sweep/
+    │   │   └── theme.py
+    │   │
+    │   ├── 2026-05-13_optimized_model/    # NumPy + Numba JIT performance model
+    │   │   ├── config.yaml
+    │   │   ├── run.py
+    │   │   ├── generate/
+    │   │   ├── simulate/
+    │   │   └── sweep/
+    │   │
+    │   └── 2026-05-15_failure_rate/       # Weibull machine failure model
+    │       ├── config.yaml
+    │       ├── run.py
+    │       ├── generate/
+    │       ├── simulate/
+    │       └── sweep/
     │
-    ├── 2026-04-27_rafael_model/       # Julia reimplementation of the generator
-    │   ├── generate.jl
-    │   ├── config.yaml
-    │   └── output/
-    │
-    ├── 2026-04-28_python_model/       # Python BOM-based product-driven model
-    │   ├── config.yaml
-    │   ├── run.py
-    │   ├── generate/
-    │   ├── simulate/
-    │   ├── sweep/
-    │   └── theme.py
-    │
-    ├── 2026-04-29_alpha_model/        # Stage-based layout with α parameter
-    │   ├── config.yaml
-    │   ├── run.py
-    │   ├── generate/
-    │   ├── simulate/
-    │   ├── sweep/
-    │   └── theme.py
-    │
-    ├── 2026-05-13_optimized_model/    # NumPy + Numba JIT performance model
-    │   ├── config.yaml
-    │   ├── run.py
-    │   ├── generate/
-    │   ├── simulate/
-    │   └── sweep/
-    │
-    ├── 2026-05-15_failure_rate/       # Weibull machine failure model
-    │   ├── config.yaml
-    │   ├── run.py
-    │   ├── generate/
-    │   ├── simulate/
-    │   └── sweep/
-    │
-    └── 2026-05-18_validation_model/   # Verification suite + Dash UI
+    └── alpha_model/                       # Current model — verification suite + Dash UI
         ├── config.yaml
         ├── engine/
-        │   ├── generate/              # BOM + factory builder
-        │   └── simulate/              # Numba tick loop
+        │   ├── generate/                  # BOM + factory builder
+        │   └── simulate/                  # Numba tick loop
         ├── analysis/
-        │   ├── model_verification/    # Conservation, boundary, monotonicity, statistical checks
-        │   ├── sweep/                 # Parameter sweep runner
-        │   └── use_cases/             # Availability analysis
-        ├── ui/                        # Dash multi-page web app
+        │   ├── model_verification/        # Conservation, boundary, monotonicity, statistical checks
+        │   ├── sweep/                     # Parameter sweep runner
+        │   └── use_cases/
+        │       └── availability_analysis/ # Theoretical RBD + Monte Carlo system availability
+        ├── ui/                            # Dash multi-page web app
         └── shared_utils/
 ```
 
@@ -127,10 +129,10 @@ src/
 | 2026-04-25 | `lopes_model` | Baseline CLEMATIS implementation. Random DAG generator (MN-RM) and discrete-time simulator producing starved / blocked / working state logs. Pure continuous flow, no BOM or orders. |
 | 2026-04-27 | `rafael_model` | Julia reimplementation of the MN-RM generator. Same graph structure, different language and runtime. |
 | 2026-04-28 | `python_model` | Full Python rewrite with a **product-driven** approach. Introduces a Bill of Materials (BOM), workstation configurations (processing time, setup time, costs), and a parallel or linear layout topology. Adds parameter sweep and visualizations. |
-| 2026-04-29 | `alpha_model` | Replaces the binary parallel/linear topology with a continuous **α parameter** (α = depth / workstation count) that produces a spectrum of stage-based layouts between fully parallel and fully serial. |
+| 2026-04-29 | `combined_model` | Replaces the binary parallel/linear topology with a continuous **α parameter** (α = depth / workstation count) that produces a spectrum of stage-based layouts between fully parallel and fully serial. |
 | 2026-05-13 | `optimized_model` | Performance rewrite using **NumPy vectorization** and **Numba JIT compilation** (@njit). Enables large-scale sweeps that would be too slow in pure Python. |
 | 2026-05-15 | `failure_rate` | Adds a **Weibull failure model** with shape and scale parameters, replacing the simple Bernoulli trial. Machines now have age-dependent failure probabilities and explicit repair/downtime cycles. |
-| 2026-05-18 | `validation_model` | Adds a dedicated **verification suite** with four test categories (conservation, boundary, monotonicity, statistical), a **complexity metric C** (distinct non-raw component types reachable from each product in the BOM), and a **Dash multi-page web UI** for running generate / simulate / sweep / verify interactively in the browser. |
+| current | `alpha_model` | Adds a dedicated **verification suite** with four test categories (conservation, boundary, monotonicity, statistical) and five monotonicity tests with ten data points each. Adds a **complexity metric C** (distinct non-raw component types reachable from each product in the BOM). Adds a **system availability analysis** use case: theoretical steady-state availability via 2-D numerical integration over the Weibull parameter distributions and exact 2^N workstation-state enumeration, validated against a Monte Carlo ground truth. Adds a **Dash multi-page web UI** for running generate / simulate / sweep / verify / availability interactively in the browser. |
 
 ---
 
@@ -138,15 +140,15 @@ src/
 
 ### Latest model — Dash web UI (recommended)
 
-The current model (`2026-05-18_validation_model`) ships a multi-page
-Dash web app as its primary interface. Launch it from the model root:
+The current model (`alpha_model`) ships a multi-page Dash web app as
+its primary interface. Launch it from the model root:
 
 ```bash
-cd src/models/2026-05-18_validation_model
+cd src/models/alpha_model
 uv run ui/app.py
 ```
 
-Then open **http://127.0.0.1:8050** in your browser. The sidebar
+Then open **http://127.0.0.1:8501** in your browser. The sidebar
 groups pages into **Engine** (Generate, Simulate), **Analyse**
 (Sweep, Verify, Availability), and **Configure** (live config editor).
 
@@ -157,14 +159,14 @@ and run `run.py` — it generates factory data, runs the simulation,
 writes output CSVs, and opens visualizations.
 
 ```bash
-# Example: run the alpha model
-uv run src/models/2026-04-29_alpha_model/run.py
+# Example: run the combined model
+uv run src/models/legacy_models/2026-04-29_combined_model/run.py
 ```
 
 To run a parameter sweep (where available):
 
 ```bash
-uv run src/models/2026-04-29_alpha_model/sweep/sweep.py
+uv run src/models/legacy_models/2026-04-29_combined_model/sweep/sweep.py
 ```
 
 See each model's `README.md` for the full list of parameters and output files.

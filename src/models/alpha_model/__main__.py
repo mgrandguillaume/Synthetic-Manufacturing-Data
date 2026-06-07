@@ -7,7 +7,7 @@ Launches the Dash UI on http://127.0.0.1:8501
 Usage
 -----
   python __main__.py            # from the model root directory
-  python -m 2026-05-18_validation_model   # from src/models/
+  python -m alpha_model   # from src/models/
 """
 
 import os

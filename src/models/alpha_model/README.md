@@ -870,13 +870,15 @@ Each test runs the simulation with an extreme input where the correct answer is 
 
 **3. Monotonicity** — directional-effect tests
 
-These checks verify that changing one parameter in a known direction produces the expected effect on makespan. Each test runs the simulation at three levels of one swept parameter and checks the direction of the trend. Because a fixed seed is used, results are deterministic.
+These checks verify that changing one parameter in a known direction produces the expected effect on the output metric. Each test sweeps one parameter across 10 levels and checks the direction of the trend. Because a fixed seed is used, results are deterministic.
 
 | Check | Swept parameter | Expected direction |
 |---|---|---|
-| More workstations | `workstations_count`: 2 → 4 → 8 | Makespan weakly decreasing. |
-| Larger buffer | `buffer_capacity`: 2 → 10 → 100 | Makespan weakly decreasing. |
-| More orders | `n_orders`: 3 → 6 → 12 | Makespan strictly increasing. |
+| More workstations | `workstations_count`: 2 → 3 → … → 11 | Makespan weakly decreasing. |
+| Larger buffer | `buffer_capacity`: 1 → 2 → … → 10 | Makespan weakly decreasing. |
+| More orders | `n_orders`: 2 → 4 → … → 20 | Makespan strictly increasing. |
+| Higher branching | `branching`: 1 → 2 → … → 10 | Non-raw component count strictly increasing. (Generator-only test; no simulation.) |
+| Higher BOM quantity | `quantity`: [1,1] → [2,2] → … → [10,10] | Mean lead time strictly increasing. |
 
 **4. Statistical / theoretical** — comparison against analytical benchmarks
 
@@ -922,8 +924,8 @@ Compares two approaches to computing steady-state system availability for the ge
 
 | Approach | Description |
 |---|---|
-| **Theoretical (integrated)** | E[A_ws] is computed by 2-D numerical quadrature over the full (β, λ) distributions using the mean MTTR, then propagated through the factory's RBD topology via exact 2^N workstation-state enumeration (or Monte Carlo for >22 workstations) |
-| **Experimental** | Monte Carlo: replications of the full Weibull failure–repair cycle on an adaptive time grid, aggregated into an empirical availability distribution and outage duration histogram |
+| **Theoretical (integrated)** | E[A_ws] is computed by 2-D numerical quadrature over the full (β, λ) distributions using the mean MTTR. System availability is then computed by exact 2^N workstation-state enumeration (or Monte Carlo for >22 workstations). Exact enumeration is required because workstations can be shared across components: a naive product of per-component availabilities would treat each shared workstation failure as independent per component, underestimating system availability. |
+| **Experimental** | Monte Carlo: replications of the full Weibull failure–repair cycle on an adaptive time grid, aggregated into an empirical availability distribution and outage duration histogram. |
 
 The simulation horizon and warm-up are scaled automatically to the workstation MTBF, so the analysis is well-conditioned across any configured parameter range. The script produces a three-panel figure (per-replication availability histogram; outage duration distribution; Monte Carlo convergence) and prints a comparison table to stdout. See the use case README for a full explanation of the methodology and how to interpret the results.
 
