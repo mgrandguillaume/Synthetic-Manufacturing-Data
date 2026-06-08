@@ -1,20 +1,24 @@
-# Simple Assembly Factory — Synthetic Data Model
+# Alpha Model - Synthetic Manufacturing Data Generator 
 
-This model generates and simulates a small synthetic assembly factory driven by a single config file (`config.yaml`). Running **Generate** first produces the factory structure; running **Simulate** replays production orders through it using a Discrete-Time Simulation. Running **Sweep** repeats this across a grid of structural parameters for analysis.
-
+This model generates and simulates synthetic assembly factories driven by a single config file (`config.yaml`). Running **Generate** first produces the factory structure; running **Simulate** replays production orders through it using a Discrete-Time Simulation. In addition, the model contains functionality allowing the created synthetic manufacturing data to be analyzed.
 ## Running the UI
 
-The primary interface is a Dash web app. Launch it from the `ui/` directory:
+The primary interface is a Dash web app. **Python** must be installed first. Then install `uv`:
 
 ```bash
-cd ui
-python app.py
+pip install uv
 ```
 
-Or from the model root:
+Then launch from the model root:
 
 ```bash
-python ui/app.py
+uv run python __main__.py
+```
+
+Or equivalently:
+
+```bash
+uv run python ui/app.py
 ```
 
 Then open **http://127.0.0.1:8501** in your browser. The sidebar groups pages into **Engine** (Generate, Simulate) and **Analyse** (Sweep, Validate, Availability). The **Configure** page lets you edit `config.yaml` directly without leaving the browser. All sections below describe the underlying logic; see the UI for the interactive interface.
@@ -56,13 +60,14 @@ Then open **http://127.0.0.1:8501** in your browser. The sidebar groups pages in
   - [Visualize](#visualize)
     - [Single simulation run](#single-simulation-run)
     - [Parameter sweep](#parameter-sweep)
-- [Validate](#validate)
+- [Verify](#verify)
   - [How to run](#how-to-run)
   - [Check groups](#check-groups)
   - [Output files](#output-files-3)
   - [Visualize](#visualize-1)
 - [Use Cases](#use-cases)
   - [Availability analysis](#availability-analysis)
+- [Exporting Figures for Reports](#exporting-figures-for-reports)
 - [Model Limitations](#model-limitations)
   - [Greedy, non-anticipating scheduler](#greedy-non-anticipating-scheduler)
   - [No stochasticity during simulation execution](#no-stochasticity-during-simulation-execution)
@@ -73,6 +78,8 @@ Then open **http://127.0.0.1:8501** in your browser. The sidebar groups pages in
   - [Uniform buffer capacity](#uniform-buffer-capacity)
   - [Fixed, deterministic order interarrival](#fixed-deterministic-order-interarrival)
   - [No preemption](#no-preemption)
+  - [Flow capacity not enforced](#flow-capacity-not-enforced)
+  - [Availability analysis assumes no cascading starvation](#availability-analysis-assumes-no-cascading-starvation)
   - [No quality control or scrap](#no-quality-control-or-scrap)
   - [Parameter combinations can cause irrecoverable deadlock](#parameter-combinations-can-cause-irrecoverable-deadlock)
 
@@ -132,7 +139,7 @@ A configuration links one workstation to one component it is capable of producin
 |---|---|---|
 | `producers_per_component` | [min, max] int | How many workstations in a stage are assigned the capability to produce each component. Sampled per component; automatically clamped to the number of workstations in that stage. A range of `[1, 1]` creates a single-machine bottleneck for every component; `[2, 3]` adds redundant capacity. |
 | `processing_time` | [min, max] float (hours) | Processing time per unit for each workstation–component pair. Used only when `assembly_type` is **not** set. Each pair is sampled independently from this range. |
-| `assembly_type` | `"low"`, `"medium"`, or `"high"` | When set, overrides `processing_time` with a formula that scales with BOM depth: `pt = α · depth^β ± variation`. This ensures deeper, more complex assemblies take proportionally longer to produce. The (α, β) coefficients are: `low` = (0.33, 1.39), `medium` = (0.28, 1.45), `high` = (0.12, 1.79). Cannot be used together with an explicit `processing_time` range. |
+| `assembly_type` | `"low"`, `"medium"`, or `"high"` | When set, overrides `processing_time` with a formula that scales with product complexity C: `pt = a · C^b ± variation`. This ensures deeper, more complex assemblies take proportionally longer to produce. The (a, b) coefficients are: `low` = (0.33, 1.39), `medium` = (0.28, 1.45), `high` = (0.12, 1.79). Cannot be used together with an explicit `processing_time` range. |
 | `variation` | float 0–1 | Fractional spread applied around the `assembly_type` formula value to preserve workstation heterogeneity. A value of `0.10` means each pair is sampled uniformly from `[pt_mean × 0.90, pt_mean × 1.10]`. Default: `0.10`. Has no effect when using the explicit `processing_time` range. |
 | `setup_time` | [min, max] float (hours) | Changeover time charged once each time a workstation switches from producing one component to a different one. Sampled per workstation–component pair. A workstation reassigned to the same component it last produced does not incur setup time. |
 | `setup_cost` | [min, max] float | Cost charged per changeover event. Sampled per pair. Contributes to the `SetupCost` column of `costs.csv`. |
@@ -273,16 +280,6 @@ The very first child created at any level is always new (the pool is empty at th
 
 Note that sharing always connects components across **different parents** — the same component can never appear twice as a direct input to the *same* parent. This keeps the effective branching factor equal to the configured range and avoids degenerate BOM edges.
 
-**BOM parameters**
-
-| Parameter | Description |
-|---|---|
-| `n_products` | Number of finished products to generate |
-| `depth` | Number of BOM levels (`depth = 2` means raw → intermediate → product) |
-| `branching` | `[min, max]` — number of children each node requires; sampled independently per node |
-| `quantity` | `[min, max]` — units of each input required per BOM edge; sampled per edge |
-| `sharing_ratio` | Probability (0–1) that an existing component at a given level is reused instead of a new one being created |
-
 ---
 
 ### Step 2 — Ownership renaming
@@ -323,7 +320,7 @@ The **alpha (α) parameter** summarises the average serial/parallel topology:
 - **α = 1** — one workstation per stage on average; serial, specialised factory
 - **α → 0** — many workstations per stage on average; wide, parallel factory with redundant capacity at each level
 
-Note that α captures the *average* stage size. With `stage_balance` set to a low value, individual stages can deviate significantly from this average — two factories with the same α can have very different bottleneck patterns.
+Note that α captures the *average* stage size. With `stage_balance` set to a low value, individual stages can deviate significantly from this average; two factories with the same α can have very different bottleneck patterns.
 
 > **Constraint:** `depth` must not exceed `workstations_count`. Each stage must receive at least one workstation, so `depth > workstations_count` is invalid.
 
@@ -363,16 +360,16 @@ A high value like `10.0` is appropriate when you want α to remain the dominant 
 
 A **configuration** links one workstation to one component and specifies the time and cost of producing that component on that machine. A single workstation can hold multiple configurations, meaning it is capable of producing several different components (with a changeover in between).
 
-For each producible component at BOM level *l*, the generator randomly selects between `producers_per_component[0]` and `producers_per_component[1]` workstations from stage *l*. Each selected `(workstation, component)` pair gets independently sampled timing and cost values.
+For each producible component, the generator randomly selects between the minimum and maximum of `producers_per_component` workstations from that component's stage. Each selected `(workstation, component)` pair gets independently sampled timing and cost values.
 
 **Configuration parameters**
 
 | Parameter | Description |
 |---|---|
 | `producers_per_component` | `[min, max]` — how many workstations can produce each component; clamped to the stage size |
-| `assembly_type` | `"low"`, `"medium"`, or `"high"` — sets the (a, b) coefficients for the processing-time formula (see below). Mutually exclusive with `processing_time`. |
+| `assembly_type` | `"low"`, `"medium"`, or `"high"` — sets the (a, b) coefficients for the processing-time formula (see below). Cannot be used together with `processing_time`. |
 | `variation` | Fractional spread around the formula value, e.g. `0.10` for ±10 %. Each (workstation, component) pair is sampled independently within this band. Default: `0.10`. |
-| `processing_time` | `[min, max]` hours — legacy explicit range. Used only when `assembly_type` is absent. |
+| `processing_time` | `[min, max]` hours — explicit range, used when `assembly_type` is not set. |
 | `setup_time` | `[min, max]` hours — changeover time when switching to this component; sampled per pair |
 | `setup_cost` | `[min, max]` — cost charged once per changeover; sampled per pair |
 | `operating_cost` | `[min, max]` — cost per unit produced; sampled per pair |
@@ -472,10 +469,6 @@ In addition to the CSV files, `generate_from_params()` returns a `"complexity"` 
 
 Run the simulation from the **Simulate** page in the UI (requires a prior Generate run), or call it directly:
 
-```python
-from engine.simulate.simulate import simulate
-results = simulate(gen_result, n_orders=10, ...)
-```
 
 The simulator reads the five CSVs produced by Generate and replays a series of production orders through the factory. It uses a **Discrete-Time Simulation (DTS)** approach: time advances in fixed steps called *ticks*, and every workstation is evaluated simultaneously at each tick. This allows multiple workstations to produce different components at the same time (concurrency), and captures two failure modes that a purely sequential scheduler cannot see:
 
@@ -694,7 +687,7 @@ A machine with A = 0.80 takes 25 % longer per unit than a failure-free machine. 
 
 **`IsPredictedBottleneck`** — Theoretical bottleneck flag
 
-Hopp & Spearman (Ch. 7) define the bottleneck as the workstation with the highest utilization `u = r / r_e`, where `r_e = m / t_e` is effective capacity. For a fixed demand rate *r*, the station with the highest `t_e` has the lowest `r_e` and therefore the highest utilization, making it the bottleneck.
+Hopp & Spearman (Ch. 7) define the bottleneck as the workstation with the highest utilization `u = r / r_e`, where `r` is the demand rate (orders per hour), `m` is the number of machines at that workstation, and `r_e = m / t_e` is the effective capacity (units per hour). For a fixed demand rate *r*, the station with the highest `t_e` has the lowest `r_e` and therefore the highest utilization, making it the bottleneck.
 
 In a multi-product BOM factory the demand rate differs per workstation, so this is an approximation; it correctly identifies the machine most penalised by failures and long processing times.
 
@@ -791,7 +784,7 @@ For single-run programmatic access, `gen_result["complexity"]` holds the full `{
 | File | Contents |
 |---|---|
 | `gen_stats.csv` | Per-run factory structure counts: raw materials, non-raw components, configurations, layout edges, and product complexity (`mean_complexity`, `max_complexity`) |
-| `state_summary.csv` | Per-run, per-tick state percentages (Working / Starved / Blocked) averaged across all workstations |
+| `state_summary.csv` | Per-run, per-tick state percentages averaged across all workstations. "Working" combines Processing and Setup into a single column (`WorkingPct`); the file also includes `StarvedPct`, `BlockedPct`, and `FailedPct`. |
 | `utilization.csv` | Per-run utilization breakdown across all workstations |
 | `throughput.csv` | Per-run throughput and lead time for each completed order |
 | `costs.csv` | Per-run cost breakdown per workstation |
@@ -829,21 +822,21 @@ Charts are shown automatically on the **Sweep** page in the UI after a run compl
 
 ---
 
-## Validate
+## Verify
 
-The validation suite checks that the simulation behaves correctly by running a set of targeted tests and comparing results against known theoretical expectations. It is split into four groups of checks, ordered from purely mechanical to statistical.
+The verification suite checks that the simulation behaves correctly by running a set of targeted tests and comparing results against known theoretical expectations. It is split into four groups of checks, ordered from purely mechanical to statistical.
 
 ### How to run
 
 Run from the **Validate** page in the UI, or call it directly:
 
 ```python
-from analysis.model_validation.validate import run_all
+from analysis.model_verification.verification import run_all
 
-passed = run_all(show_charts=False, report_dir="analysis/model_verification/validation_output")
+passed = run_all(show_charts=False, report_dir="analysis/model_verification/verification_output")
 ```
 
-Results are written to `analysis/model_validation/validation_output/validation_report.txt` and displayed in the UI. Chart data is saved as CSVs in the same folder.
+Results are written to `analysis/model_verification/verification_output/verification_report.txt` and displayed in the UI. Chart data is saved as CSVs in the same folder.
 
 ### Check groups
 
@@ -891,18 +884,19 @@ These checks compare simulation output against predictions from queueing theory 
 
 ### Output files
 
-All validation output is written to `analysis/model_validation/validation_output/`.
+All verification output is written to `analysis/model_verification/verification_output/`.
 
 | File | Contents |
 |---|---|
-| `validation_report.txt` | Full PASS/FAIL report with per-check messages and timing |
+| `verification_report.txt` | Full PASS/FAIL report with per-check messages and timing |
 | `val_orders.csv` | Cumulative orders completed over time (used by chart 1) |
 | `val_buffers.csv` | Buffer stock per component over time (used by chart 2) |
 | `val_availability.csv` | Observed and theoretical availability per workstation (used by chart 3) |
+| `val_monotonicity.csv` | Monotonicity test results: swept parameter values, output metric values, pass/fail direction per test (used by the monotonicity chart) |
 
 ### Visualize
 
-Diagnostic charts are shown automatically on the **Validate** page in the UI after a run completes. The underlying script `analysis/model_validation/visualize_validation.py` can also be run standalone against existing CSVs. Three diagnostic charts are shown in a single figure:
+Diagnostic charts are shown automatically on the **Validate** page in the UI after a run completes. The underlying script `analysis/model_verification/visualize_verification.py` can also be run standalone against existing CSVs. Three diagnostic charts are shown in a single figure:
 
 1. **Cumulative orders completed over time** — a step chart. A smooth staircase confirms the scheduler is making continuous progress. A prolonged flat section indicates deadlock or persistent starvation.
 2. **Buffer levels over time** — stock of each non-raw component over the simulation, with a reference line at `buffer_capacity`. A line that reaches the cap and stays there signals a persistent blocking cascade upstream.
@@ -928,6 +922,34 @@ Compares two approaches to computing steady-state system availability for the ge
 | **Experimental** | Monte Carlo: replications of the full Weibull failure–repair cycle on an adaptive time grid, aggregated into an empirical availability distribution and outage duration histogram. |
 
 The simulation horizon and warm-up are scaled automatically to the workstation MTBF, so the analysis is well-conditioned across any configured parameter range. The script produces a three-panel figure (per-replication availability histogram; outage duration distribution; Monte Carlo convergence) and prints a comparison table to stdout. See the use case README for a full explanation of the methodology and how to interpret the results.
+
+---
+
+## Exporting Figures for Reports
+
+`export_figures.py` re-renders all model figures in a report-friendly style (white background, print-friendly colours) and saves them as self-contained interactive HTML files. Open any exported file in a browser to inspect, zoom, and screenshot for a paper or report.
+
+```bash
+# From the model root:
+python export_figures.py               # generate + sweep + verify → HTML (default)
+python export_figures.py --generate    # factory layout graph only
+python export_figures.py --sweep       # sweep figure only
+python export_figures.py --verify      # verification diagnostics + monotonicity
+python export_figures.py --availability  # availability (re-runs Monte Carlo, ~1–3 min)
+python export_figures.py --all         # all figures including availability
+```
+
+Output files are written to `export/` in the model root:
+
+| File | Figure |
+|---|---|
+| `generation.html` | Factory layout graph (Pyvis/vis.js) |
+| `sweep.html` | Parameter sweep (9 charts) |
+| `verification_diagnostics.html` | Verification diagnostics (3 charts) |
+| `verification_monotonicity.html` | Monotonicity test trends (5 charts) |
+| `availability.html` | Availability analysis — only with `--availability` or `--all` |
+
+**Prerequisites:** the relevant CSV data must already exist on disk before running. Run Generate, Sweep, and Verify first (via the UI or `run.py`) to produce the required CSVs. The availability figure is the exception — it re-runs the Monte Carlo analysis on the fly and requires only `config.yaml` with `failures.enabled: true`.
 
 ---
 
@@ -970,6 +992,14 @@ Orders arrive at perfectly regular intervals (`order_interarrival` ticks apart).
 ### No preemption
 
 Once a job has started on a workstation it runs to completion. A higher-priority demand item that arrives mid-job cannot interrupt it. In some real scheduling environments (particularly when due-date pressure is high) preemption or job splitting is used to re-prioritise work mid-run; that behaviour is not modelled here.
+
+### Flow capacity not enforced
+
+Each material flow edge in the layout has a `flow_capacity` value (sampled from the configured range and stored in `layout.csv`). The current simulator does not enforce this limit; all edges are treated as having unlimited throughput at runtime. Flow capacity is recorded for reference and potential future use, but cannot currently cause congestion or blocking between stages.
+
+### Availability analysis assumes no cascading starvation
+
+The theoretical availability calculation (see [Availability analysis](#availability-analysis)) predicts steady-state system uptime based on individual workstation MTBF and MTTR values. It correctly accounts for shared workstations by enumerating all possible failure-state combinations. However, it does not model the downstream effect of a prolonged repair: a workstation that is down for an extended period can drain the intermediate buffers that feed subsequent stages, causing starvation cascades that the theoretical formula does not predict. The theoretical availability therefore provides an optimistic upper bound; the experimental Monte Carlo result is a closer reflection of actual throughput loss under failure conditions.
 
 ### No quality control or scrap
 

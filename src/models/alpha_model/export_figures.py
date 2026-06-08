@@ -5,22 +5,14 @@ Export all model figures in report style (white background, print-friendly colou
 Reads the pre-computed CSV files that are already on disk and re-renders each
 figure using report_theme.py instead of the normal dark UI theme.
 
-By default each figure is saved as a self-contained interactive HTML file —
-no extra packages required.  Open the HTML in any browser to inspect, zoom,
-and screenshot for your report.
-
-Pass --static to also write PNG + SVG files for the Plotly figures.  This
-requires Kaleido:
-    pip install kaleido
-
-Note: the factory layout graph (--generate) is a Pyvis/vis.js figure and can
-only be exported as HTML — PNG/SVG is not available for it.
+Each figure is saved as a self-contained interactive HTML file — no extra
+packages required.  Open the HTML in any browser to inspect, zoom, and
+screenshot for your report.
 
 Usage
 -----
     # From the model root:
     python export_figures.py                  # generate + sweep + verify → HTML (fast)
-    python export_figures.py --static         # same + PNG + SVG for Plotly figures
     python export_figures.py --generate       # factory layout graph only
     python export_figures.py --sweep          # sweep only
     python export_figures.py --verify         # verification + monotonicity only
@@ -35,11 +27,6 @@ Output
         verification_diagnostics.html
         verification_monotonicity.html
         availability.html                     (only with --availability / --all)
-
-        # also with --static (Plotly figures only):
-        sweep.png / sweep.svg
-        verification_diagnostics.png / verification_diagnostics.svg
-        …
 
 Prerequisites
 -------------
@@ -93,45 +80,15 @@ _VERIFY_DIR   = os.path.join(
 )
 _GENERATE_DIR = os.path.join(_MODEL_ROOT, "engine", "generate", "gen_output")
 
-# Static image settings (only used with --static)
-_EXPORT_WIDTH = 1_200
-_EXPORT_SCALE = 2       # effective 2 400 px wide ≈ 150 dpi on A4
-
-
 # ── Save helpers ───────────────────────────────────────────────────────────────
 
-def _save_html(fig, name: str) -> None:
-    """Write a self-contained interactive HTML file.  No extra packages needed."""
+def _save(fig, name: str) -> None:
+    """Write a self-contained interactive HTML file and open it in the browser."""
     os.makedirs(_EXPORT_DIR, exist_ok=True)
     path = os.path.join(_EXPORT_DIR, f"{name}.html")
     fig.write_html(path, include_plotlyjs="cdn")
     print(f"  ✓  {path}")
-
-
-def _save_static(fig, name: str) -> None:
-    """Write PNG + SVG.  Requires kaleido (pip install kaleido)."""
-    os.makedirs(_EXPORT_DIR, exist_ok=True)
-    height = int(fig.layout.height or 800)
-
-    for ext, scale in [("png", _EXPORT_SCALE), ("svg", 1)]:
-        path = os.path.join(_EXPORT_DIR, f"{name}.{ext}")
-        try:
-            fig.write_image(path, width=_EXPORT_WIDTH, height=height, scale=scale)
-            print(f"  ✓  {path}")
-        except Exception as exc:
-            print(f"  ✗  {ext.upper()} export failed ({name}): {exc}")
-            if "kaleido" in str(exc).lower():
-                print("       Install it with:  pip install kaleido")
-            break   # if PNG fails SVG will too — skip it
-
-
-def _save(fig, name: str, static: bool) -> None:
-    # Write HTML first, then open as a local file:// URL — no server needed.
-    _save_html(fig, name)
-    html_path = os.path.join(_EXPORT_DIR, f"{name}.html")
-    webbrowser.open(f"file:///{html_path.replace(os.sep, '/')}")
-    if static:
-        _save_static(fig, name)
+    webbrowser.open(f"file:///{path.replace(os.sep, '/')}")
 
 
 # ── Individual exporters ───────────────────────────────────────────────────────
@@ -188,25 +145,25 @@ def _export_generation() -> None:
     webbrowser.open(f"file:///{path.replace(os.sep, '/')}")
 
 
-def _export_sweep(static: bool) -> None:
+def _export_sweep() -> None:
     from analysis.sweep.visualize_sweep import show
 
     print("\n[sweep] building figure from sweep_output CSVs…")
     fig = show(_SWEEP_DIR)
     fig.update_layout(margin=dict(r=220))
-    _save(fig, "sweep", static)
+    _save(fig, "sweep")
 
 
-def _export_verification(static: bool) -> None:
+def _export_verification() -> None:
     from analysis.model_verification.visualize_verification import show, plot_monotonicity
 
     print("\n[verify] building verification-diagnostics figure…")
-    _save(show(_VERIFY_DIR), "verification_diagnostics", static)
+    _save(show(_VERIFY_DIR), "verification_diagnostics")
 
     mono_path = os.path.join(_VERIFY_DIR, "val_monotonicity.csv")
     if os.path.exists(mono_path):
         print("\n[verify] building monotonicity figure…")
-        _save(plot_monotonicity(_VERIFY_DIR, n_cols=2), "verification_monotonicity", static)
+        _save(plot_monotonicity(_VERIFY_DIR, n_cols=2), "verification_monotonicity")
     else:
         print(
             "\n[verify] val_monotonicity.csv not found — skipping monotonicity chart.\n"
@@ -214,7 +171,7 @@ def _export_verification(static: bool) -> None:
         )
 
 
-def _export_availability(static: bool) -> None:
+def _export_availability() -> None:
     """Re-run the availability analysis and export the resulting figure."""
     import math
     from shared_utils import utils, validate_config
@@ -276,7 +233,7 @@ def _export_availability(static: bool) -> None:
     print("[availability] Monte Carlo done.")
 
     fig = _show_plots(theo_int, exp_res, gen_result, n_replications=N_REPLICATIONS)
-    _save(fig, "availability", static)
+    _save(fig, "availability")
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
@@ -290,14 +247,12 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Default (no flags): exports generate + sweep + verification as HTML files.\n"
-            "Add --static to also write PNG + SVG for Plotly figures (requires:  pip install kaleido).\n"
-            "The factory layout (--generate) is HTML-only (Pyvis/vis.js, no PNG/SVG).\n"
             "Add --availability or --all to include the availability figure,\n"
             "which re-runs the full Monte Carlo analysis (~1–3 min)."
         ),
     )
     parser.add_argument("--generate",     action="store_true",
-                        help="Export the factory layout graph (HTML only — Pyvis figure)")
+                        help="Export the factory layout graph (HTML — Pyvis figure)")
     parser.add_argument("--sweep",        action="store_true",
                         help="Export the parameter-sweep figure")
     parser.add_argument("--verify",       action="store_true",
@@ -306,11 +261,9 @@ def main() -> None:
                         help="Export the availability figure (re-runs Monte Carlo)")
     parser.add_argument("--all",          action="store_true",
                         help="Export all figures (generate + sweep + verify + availability)")
-    parser.add_argument("--static",       action="store_true",
-                        help="Also write PNG + SVG files for Plotly figures (requires kaleido)")
     args = parser.parse_args()
 
-    no_flags   = not any([args.generate, args.sweep, args.verify, args.availability, args.all])
+    no_flags    = not any([args.generate, args.sweep, args.verify, args.availability, args.all])
     do_generate = args.generate or args.all or no_flags
     do_sweep    = args.sweep    or args.all or no_flags
     do_verify   = args.verify   or args.all or no_flags
@@ -329,7 +282,7 @@ def main() -> None:
 
     if do_sweep:
         try:
-            _export_sweep(args.static)
+            _export_sweep()
         except FileNotFoundError as exc:
             print(f"\n[sweep] Data not found: {exc}")
             print("        Run the sweep first (UI → Sweep, or python run.py --sweep).")
@@ -338,7 +291,7 @@ def main() -> None:
 
     if do_verify:
         try:
-            _export_verification(args.static)
+            _export_verification()
         except FileNotFoundError as exc:
             print(f"\n[verify] Data not found: {exc}")
             print("         Run verification first (UI → Verify, or python run.py --verify-only).")
@@ -347,7 +300,7 @@ def main() -> None:
 
     if do_avail:
         try:
-            _export_availability(args.static)
+            _export_availability()
         except Exception as exc:
             print(f"\n[availability] ERROR: {exc}")
 
