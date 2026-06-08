@@ -1,6 +1,6 @@
 ────────────────────────────────────────────────────────────────────────
   Verification Report — Assembly Factory Model
-  Generated: 2026-06-05 15:06:05
+  Generated: 2026-06-07 16:20:52
 ────────────────────────────────────────────────────────────────────────
 
   1. Conservation Laws  (must never fail)
@@ -9,7 +9,7 @@
          All workstations: state hours sum = 1.8500 h (actual_ticks=37, tick_duration=0.05)
   [PASS]  cost_nonnegative
          All cost columns are ≥ 0 across all workstations.
-     (0.4 s)
+     (0.0 s)
 
   2. Boundary / Degenerate Cases  (unit tests)
      zero orders · single order · large buffer · large λ · full sharing · deterministic · order cycling · BOM component count
@@ -30,7 +30,7 @@
          Each of 3 products received exactly 2 orders — correct.
   [PASS]  boundary_bom_component_count
          n_non_raw = 7 == 7 (1 + 2 + 2²  for depth=3, branching=2) — correct.
-     (0.1 s)
+     (0.0 s)
 
   3. Monotonicity  (direction-of-effect tests)
      more workstations · larger buffer · more orders · higher branching · higher BOM quantity
@@ -45,7 +45,7 @@
          Component count strictly increases with branching — correct. (branching=1: 3 components, branching=2: 7 components, branching=3: 13 components, branching=4: 21 components, branching=5: 31 components, branching=6: 43 components, branching=7: 57 components, branching=8: 73 components, branching=9: 91 components, branching=10: 111 components)
   [PASS]  monotonicity_higher_quantity_longer_leadtime
          Mean lead time strictly increases with BOM quantity — correct. (qty=1: 1.28 h, qty=2: 1.58 h, qty=3: 1.98 h, qty=4: 2.22 h, qty=5: 2.62 h, qty=6: 3.02 h, qty=7: 3.42 h, qty=8: 3.82 h, qty=9: 4.22 h, qty=10: 4.62 h)
-     (0.9 s)
+     (0.3 s)
 
   4. Statistical / Theoretical  (Little's Law + availability)
 

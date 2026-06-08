@@ -9,14 +9,19 @@ By default each figure is saved as a self-contained interactive HTML file —
 no extra packages required.  Open the HTML in any browser to inspect, zoom,
 and screenshot for your report.
 
-Pass --static to also write PNG + SVG files.  This requires Kaleido:
+Pass --static to also write PNG + SVG files for the Plotly figures.  This
+requires Kaleido:
     pip install kaleido
+
+Note: the factory layout graph (--generate) is a Pyvis/vis.js figure and can
+only be exported as HTML — PNG/SVG is not available for it.
 
 Usage
 -----
     # From the model root:
-    python export_figures.py                  # sweep + verify → HTML (fast)
-    python export_figures.py --static         # sweep + verify → HTML + PNG + SVG
+    python export_figures.py                  # generate + sweep + verify → HTML (fast)
+    python export_figures.py --static         # same + PNG + SVG for Plotly figures
+    python export_figures.py --generate       # factory layout graph only
     python export_figures.py --sweep          # sweep only
     python export_figures.py --verify         # verification + monotonicity only
     python export_figures.py --availability   # availability (re-runs Monte Carlo)
@@ -25,12 +30,13 @@ Usage
 Output
 ------
     export/
+        generation.html
         sweep.html
         verification_diagnostics.html
         verification_monotonicity.html
         availability.html                     (only with --availability / --all)
 
-        # also with --static:
+        # also with --static (Plotly figures only):
         sweep.png / sweep.svg
         verification_diagnostics.png / verification_diagnostics.svg
         …
@@ -38,6 +44,7 @@ Output
 Prerequisites
 -------------
 CSV data must exist on disk before running:
+    - Generation:    run generate in the UI, or:  python run.py --generate-only
     - Sweep:         run the sweep in the UI, or:  python run.py --sweep
     - Verification:  run verification in the UI, or:  python run.py --verify-only
     - Availability:  generated on the fly when --availability / --all is passed.
@@ -79,11 +86,12 @@ def _apply_report_theme() -> None:
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
-_EXPORT_DIR = os.path.join(_MODEL_ROOT, "export")
-_SWEEP_DIR  = os.path.join(_MODEL_ROOT, "analysis", "sweep", "sweep_output")
-_VERIFY_DIR = os.path.join(
+_EXPORT_DIR   = os.path.join(_MODEL_ROOT, "export")
+_SWEEP_DIR    = os.path.join(_MODEL_ROOT, "analysis", "sweep", "sweep_output")
+_VERIFY_DIR   = os.path.join(
     _MODEL_ROOT, "analysis", "model_verification", "verification_output"
 )
+_GENERATE_DIR = os.path.join(_MODEL_ROOT, "engine", "generate", "gen_output")
 
 # Static image settings (only used with --static)
 _EXPORT_WIDTH = 1_200
@@ -127,6 +135,58 @@ def _save(fig, name: str, static: bool) -> None:
 
 
 # ── Individual exporters ───────────────────────────────────────────────────────
+
+def _export_generation() -> None:
+    """Build and save the factory layout graph as a report-style HTML file.
+
+    Reads the pre-generated CSVs from engine/generate/gen_output/.
+    Note: Pyvis/vis.js figures cannot be exported as PNG/SVG — HTML only.
+    """
+    import pandas as pd
+    from types import SimpleNamespace
+    from engine.generate.visualize_gen import build_html
+
+    print("\n[generate] building factory layout figure from gen_output CSVs…")
+
+    layout_df = pd.read_csv(os.path.join(_GENERATE_DIR, "layout.csv"))
+    ws_df     = pd.read_csv(os.path.join(_GENERATE_DIR, "workstations.csv"))
+    cfg_df    = pd.read_csv(os.path.join(_GENERATE_DIR, "configurations.csv"))
+    bom_df    = pd.read_csv(os.path.join(_GENERATE_DIR, "bom.csv"))
+
+    gen_result = {
+        "workstations": [
+            SimpleNamespace(id=row["ID"], name=row["Name"], type=row["Type"])
+            for _, row in ws_df.iterrows()
+        ],
+        "layout_edges": [
+            SimpleNamespace(
+                origin=row["Origin"], destination=row["Destination"],
+                capacity=row["Capacity"], cost=row["Cost"],
+            )
+            for _, row in layout_df.iterrows()
+        ],
+        "configurations": [
+            SimpleNamespace(
+                workstation=row["Workstation"], component=row["Component"],
+                processing_time=row["ProcessingTime"], setup_time=row["SetupTime"],
+            )
+            for _, row in cfg_df.iterrows()
+        ],
+        "bom_edges": [
+            SimpleNamespace(input=row["Input"], output=row["Output"])
+            for _, row in bom_df.iterrows()
+        ],
+    }
+
+    html = build_html(gen_result, height="900px", report_theme=True)
+
+    os.makedirs(_EXPORT_DIR, exist_ok=True)
+    path = os.path.join(_EXPORT_DIR, "generation.html")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(html)
+    print(f"  ✓  {path}")
+    webbrowser.open(f"file:///{path.replace(os.sep, '/')}")
+
 
 def _export_sweep(static: bool) -> None:
     from analysis.sweep.visualize_sweep import show
@@ -229,12 +289,15 @@ def main() -> None:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
-            "Default (no flags): exports sweep + verification as interactive HTML files.\n"
-            "Add --static to also write PNG + SVG (requires:  pip install kaleido).\n"
+            "Default (no flags): exports generate + sweep + verification as HTML files.\n"
+            "Add --static to also write PNG + SVG for Plotly figures (requires:  pip install kaleido).\n"
+            "The factory layout (--generate) is HTML-only (Pyvis/vis.js, no PNG/SVG).\n"
             "Add --availability or --all to include the availability figure,\n"
             "which re-runs the full Monte Carlo analysis (~1–3 min)."
         ),
     )
+    parser.add_argument("--generate",     action="store_true",
+                        help="Export the factory layout graph (HTML only — Pyvis figure)")
     parser.add_argument("--sweep",        action="store_true",
                         help="Export the parameter-sweep figure")
     parser.add_argument("--verify",       action="store_true",
@@ -242,17 +305,27 @@ def main() -> None:
     parser.add_argument("--availability", action="store_true",
                         help="Export the availability figure (re-runs Monte Carlo)")
     parser.add_argument("--all",          action="store_true",
-                        help="Export all figures (sweep + verify + availability)")
+                        help="Export all figures (generate + sweep + verify + availability)")
     parser.add_argument("--static",       action="store_true",
-                        help="Also write PNG + SVG files (requires kaleido)")
+                        help="Also write PNG + SVG files for Plotly figures (requires kaleido)")
     args = parser.parse_args()
 
-    no_flags  = not any([args.sweep, args.verify, args.availability, args.all])
-    do_sweep  = args.sweep  or args.all or no_flags
-    do_verify = args.verify or args.all or no_flags
-    do_avail  = args.availability or args.all
+    no_flags   = not any([args.generate, args.sweep, args.verify, args.availability, args.all])
+    do_generate = args.generate or args.all or no_flags
+    do_sweep    = args.sweep    or args.all or no_flags
+    do_verify   = args.verify   or args.all or no_flags
+    do_avail    = args.availability or args.all
 
     _apply_report_theme()
+
+    if do_generate:
+        try:
+            _export_generation()
+        except FileNotFoundError as exc:
+            print(f"\n[generate] Data not found: {exc}")
+            print("           Run generate first (UI → Generate, or python run.py --generate-only).")
+        except Exception as exc:
+            print(f"\n[generate] ERROR: {exc}")
 
     if do_sweep:
         try:

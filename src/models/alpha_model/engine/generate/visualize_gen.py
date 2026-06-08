@@ -66,23 +66,42 @@ _NODE_COLORS: dict[str, dict] = {
     },
 }
 
+# Light / report-style node colours (white background, print-friendly)
+_NODE_COLORS_LIGHT: dict[str, dict] = {
+    "source": {
+        "background": "#bbf7d0", "border": "#16a34a",
+        "highlight": {"background": "#86efac", "border": "#15803d"},
+        "hover":     {"background": "#86efac", "border": "#15803d"},
+    },
+    "production": {
+        "background": "#bfdbfe", "border": "#2563eb",
+        "highlight": {"background": "#93c5fd", "border": "#1d4ed8"},
+        "hover":     {"background": "#93c5fd", "border": "#1d4ed8"},
+    },
+    "sink": {
+        "background": "#fecaca", "border": "#dc2626",
+        "highlight": {"background": "#fca5a5", "border": "#b91c1c"},
+        "hover":     {"background": "#fca5a5", "border": "#b91c1c"},
+    },
+}
+
 _TOOLTIP_JS = """
 <!-- ── Custom tooltip injection ───────────────────────────────────────── -->
 <style>
   #vt {{
     position: fixed;
     pointer-events: none;
-    background: #1e2130;
-    color: #e6edf3;
+    background: {tip_bg};
+    color: {tip_fg};
     padding: 10px 14px;
     border-radius: 6px;
-    border: 1px solid #3a3f55;
+    border: 1px solid {tip_border};
     font-family: Inter, sans-serif;
     font-size: 13px;
     max-width: 640px;
     z-index: 9999;
     display: none;
-    box-shadow: 0 4px 24px rgba(0,0,0,0.6);
+    box-shadow: 0 4px 24px rgba(0,0,0,0.25);
     line-height: 1.5;
   }}
 </style>
@@ -144,7 +163,11 @@ _TOOLTIP_JS = """
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 
-def build_html(gen_result: dict, height: str = "600px") -> str:
+def build_html(
+    gen_result: dict,
+    height: str = "600px",
+    report_theme: bool = False,
+) -> str:
     """Return a self-contained vis.js HTML string for the factory layout.
 
     Parameters
@@ -154,7 +177,35 @@ def build_html(gen_result: dict, height: str = "600px") -> str:
         Must contain keys: workstations, layout_edges, configurations, bom_edges.
     height : str
         CSS height of the canvas, e.g. "600px" or "100vh".
+    report_theme : bool
+        When True, use a white background with print-friendly colours suitable
+        for inclusion in a report or paper.  When False (default), use the
+        dark UI theme.
     """
+    # ── Theme selection ───────────────────────────────────────────────────────
+    if report_theme:
+        _node_colors = _NODE_COLORS_LIGHT
+        _bgcolor     = "#ffffff"
+        _font_color  = "#111827"
+        _tip_bg      = "#f9fafb"
+        _tip_fg      = "#111827"
+        _tip_border  = "#d1d5db"
+        _edge_color  = "rgba(100,100,120,0.55)"
+        _edge_hl     = "#2563eb"
+        _subtext     = "#6b7280"
+        _hr_color    = "#e5e7eb"
+    else:
+        _node_colors = _NODE_COLORS
+        _bgcolor     = "#0f1117"
+        _font_color  = "#e6edf3"
+        _tip_bg      = "#1e2130"
+        _tip_fg      = "#e6edf3"
+        _tip_border  = "#3a3f55"
+        _edge_color  = "rgba(150,150,170,0.55)"
+        _edge_hl     = "#a5b4fc"
+        _subtext     = "#8b949e"
+        _hr_color    = "#3a3f55"
+
     ws_list   = gen_result["workstations"]
     edges     = gen_result["layout_edges"]
     cfgs      = gen_result["configurations"]
@@ -221,15 +272,15 @@ def build_html(gen_result: dict, height: str = "600px") -> str:
         stage = stage_of.get(node, "?")
         parts = [
             f"<b style='font-size:15px'>{node}</b><br>",
-            f"<span style='color:#8b949e'>{data['name']}</span><br>",
-            f"<span style='color:#8b949e'>Stage:&nbsp;{stage}</span>",
+            f"<span style='color:{_subtext}'>{data['name']}</span><br>",
+            f"<span style='color:{_subtext}'>Stage:&nbsp;{stage}</span>",
         ]
         outputs = ws_outputs.get(node)
         if outputs:
             sorted_outputs = sorted(outputs, key=lambda r: r[0])
             two_cols = len(sorted_outputs) > 2
             parts.append(
-                "<hr style='border:none;border-top:1px solid #3a3f55;margin:7px 0'>"
+                f"<hr style='border:none;border-top:1px solid {_hr_color};margin:7px 0'>"
                 "<b>Produces:</b>"
             )
             if two_cols:
@@ -242,14 +293,14 @@ def build_html(gen_result: dict, height: str = "600px") -> str:
                 parts.append(f"<div style='{margin}'>")
                 parts.append(
                     f"&#9654;&nbsp;<b>{comp}</b>"
-                    f"<span style='color:#8b949e;margin-left:8px'>"
+                    f"<span style='color:{_subtext};margin-left:8px'>"
                     f"PT&nbsp;{pt:.2f}h&nbsp;&nbsp;|&nbsp;&nbsp;ST&nbsp;{st:.2f}h"
                     f"</span>"
                 )
                 inputs_needed = sorted(set(comp_inputs.get(comp, [])))
                 if inputs_needed:
                     parts.append(
-                        "<div style='margin-left:14px;color:#8b949e;font-size:12px'>"
+                        f"<div style='margin-left:14px;color:{_subtext};font-size:12px'>"
                         "<i>needs:</i></div>"
                     )
                     for inp in inputs_needed:
@@ -257,7 +308,7 @@ def build_html(gen_result: dict, height: str = "600px") -> str:
                         parts.append(
                             f"<div style='margin-left:20px;font-size:12px'>"
                             f"&#9666;&nbsp;{inp}&nbsp;"
-                            f"<span style='color:#6b7280'>({suppliers})</span>"
+                            f"<span style='color:{_subtext}'>({suppliers})</span>"
                             f"</div>"
                         )
                 parts.append("</div>")
@@ -277,8 +328,8 @@ def build_html(gen_result: dict, height: str = "600px") -> str:
         height=height,
         width="100%",
         directed=True,
-        bgcolor="#0f1117",
-        font_color="#e6edf3",
+        bgcolor=_bgcolor,
+        font_color=_font_color,
         cdn_resources="in_line",   # embed JS/CSS in the HTML — no lib/ folder written
     )
     net.toggle_physics(False)
@@ -293,9 +344,9 @@ def build_html(gen_result: dict, height: str = "600px") -> str:
             node,
             label=node,
             x=x, y=y,
-            color=_NODE_COLORS.get(data["type"], _NODE_COLORS["production"]),
+            color=_node_colors.get(data["type"], _node_colors["production"]),
             size=28,
-            font={"size": 13, "color": "#e6edf3",
+            font={"size": 13, "color": _font_color,
                   "face": "Inter, sans-serif", "bold": True},
             borderWidth=2,
             shape="dot",
@@ -306,8 +357,8 @@ def build_html(gen_result: dict, height: str = "600px") -> str:
         edge_tooltips[edge_key] = _edge_tip(u, v, data["capacity"], data["cost"])
         net.add_edge(
             u, v,
-            color={"color": "rgba(150,150,170,0.55)", "highlight": "#a5b4fc",
-                   "hover": "#a5b4fc"},
+            color={"color": _edge_color, "highlight": _edge_hl,
+                   "hover": _edge_hl},
             arrows="to",
             width=1.5,
             smooth={"type": "curvedCW", "roundness": 0.08},
@@ -329,6 +380,9 @@ def build_html(gen_result: dict, height: str = "600px") -> str:
     injection = _TOOLTIP_JS.format(
         node_tips=json.dumps(node_tooltips, ensure_ascii=False),
         edge_tips=json.dumps(edge_tooltips, ensure_ascii=False),
+        tip_bg=_tip_bg,
+        tip_fg=_tip_fg,
+        tip_border=_tip_border,
     )
     html = html.replace("</body>", injection + "\n</body>")
 
