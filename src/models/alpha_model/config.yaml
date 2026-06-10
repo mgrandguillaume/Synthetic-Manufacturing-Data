@@ -15,8 +15,8 @@ workstations:
   count: 15
   stage_balance: 1.0
   producers_per_component:
-  - 1
   - 2
+  - 3
   assembly_type: medium
   variation: 0.1
   setup_time:

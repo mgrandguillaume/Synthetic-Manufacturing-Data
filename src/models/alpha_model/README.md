@@ -1,6 +1,7 @@
-# Alpha Model - Synthetic Manufacturing Data Generator 
+# Alpha Model - Synthetic Manufacturing Data Generator
 
 This model generates and simulates synthetic assembly factories driven by a single config file (`config.yaml`). Running **Generate** first produces the factory structure; running **Simulate** replays production orders through it using a Discrete-Time Simulation. In addition, the model contains functionality allowing the created synthetic manufacturing data to be analyzed.
+
 ## Running the UI
 
 The primary interface is a Dash web app. **Python** must be installed first. Then install `uv`:
@@ -51,7 +52,7 @@ Then open **http://127.0.0.1:8501** in your browser. The sidebar groups pages in
   - [What it does](#what-it-does)
   - [Output files](#output-files-1)
   - [Factory Physics metrics in utilization.csv](#factory-physics-metrics-in-utilizationcsv)
-- [Sweep](#sweep)
+- [Sweep](#sweep-1)
   - [Performance notes](#performance-notes)
   - [Parameter groups](#parameter-groups)
   - [Alpha (α)](#alpha-α)
@@ -87,7 +88,9 @@ Then open **http://127.0.0.1:8501** in your browser. The sidebar groups pages in
 
 ## Configuration Reference
 
-All model behaviour is controlled by a single file: **`config.yaml`** in the model root directory. The file is divided into seven sections. Parameters marked *[min, max]* are sampled uniformly from the given range once per generation run.
+All model behaviour is controlled by a single file: **`config.yaml`** in the model root directory. The file is divided into eight sections. Parameters marked *[min, max]* are sampled uniformly from the given range once per generation run.
+
+> **Note:** the configuration parameters documented under [configurations](#configurations) below live inside the `workstations:` section of `config.yaml` — they are documented separately here for readability, but there is no standalone `configurations:` section in the file.
 
 ---
 
@@ -133,7 +136,7 @@ The **alpha (α)** metric is derived from these two parameters and is used throu
 
 ### `configurations`
 
-A configuration links one workstation to one component it is capable of producing and specifies the time and cost parameters for that pairing. Each workstation can hold multiple configurations (capability for multiple components, switching between them via changeovers).
+A configuration links one workstation to one component it is capable of producing and specifies the time and cost parameters for that pairing. Each workstation can hold multiple configurations (capability for multiple components, switching between them via changeovers). In `config.yaml` these parameters are set inside the `workstations:` section.
 
 | Parameter | Type | Description |
 |---|---|---|
@@ -467,19 +470,18 @@ In addition to the CSV files, `generate_from_params()` returns a `"complexity"` 
 
 > This model supports optional **machine failures**. Enable them in the `failures:` section of `config.yaml`.
 
-Run the simulation from the **Simulate** page in the UI (requires a prior Generate run), or call it directly:
-
+Run the simulation from the **Simulate** page in the UI (requires a prior Generate run).
 
 The simulator reads the five CSVs produced by Generate and replays a series of production orders through the factory. It uses a **Discrete-Time Simulation (DTS)** approach: time advances in fixed steps called *ticks*, and every workstation is evaluated simultaneously at each tick. This allows multiple workstations to produce different components at the same time (concurrency), and captures two failure modes that a purely sequential scheduler cannot see:
 
 - **Blocking** — a workstation has finished a job but the output buffer is full; it holds the units and waits until space opens up downstream.
 - **Starvation** — a workstation is ready to start a job but the input components it needs have not yet arrived in the buffer; it waits until upstream production catches up.
 
-All simulation parameters (`tick_duration`, `buffer_capacity`, `order_interarrival`, `n_ticks`, `n_orders`) are set in the `simulation:` section of `config.yaml`. Results are written to `simulate/sim_output/`.
+All simulation parameters (`tick_duration`, `buffer_capacity`, `order_interarrival`, `n_ticks`, `n_orders`) are set in the `simulation:` section of `config.yaml`. Results are written to `engine/simulate/sim_output/`.
 
 ### Implementation
 
-This model replaces the initial model's pure-Python simulation with a **NumPy + Numba** implementation that compiles the tick loop to machine code. The public `simulate()` function has an identical signature and return value — `run.py`, `sweep.py`, and all visualisations are unchanged.
+This model replaces the initial model's pure-Python simulation with a **NumPy + Numba** implementation that compiles the tick loop to machine code. The public `simulate()` function has an identical signature and return value, so the sweep and all visualisations work unchanged.
 
 The simulation runs in three phases:
 
@@ -793,17 +795,17 @@ All files include the run's sweep parameters and alpha as leading columns so row
 
 ### Visualize
 
-### Single simulation run
+#### Single simulation run
 
 Charts are shown automatically on the **Simulate** page in the UI after a run completes. The underlying script `engine/simulate/visualize_sim.py` can also be run standalone against existing CSVs. Five charts are produced:
 
 1. **Machine state % over iterations** — for every tick, the percentage of all workstations in the Working, Starved, and Blocked states. Faint raw lines show per-tick values; bold lines show a rolling average. This chart follows the CLEMATIS convention from Lopes et al.
-2. **Utilisation by workstation** — stacked bar showing how each workstation split its time across all five states.
+2. **Utilisation by workstation** — stacked bar showing how each workstation split its time across all six states.
 3. **Throughput over time** — cumulative completed orders as a step chart, with mean lead time annotated.
 4. **Cost breakdown** — stacked bar of setup, operating, and transport costs per workstation.
 5. **Component buffer levels** — stock of each non-raw component buffer over time, with a capacity reference line.
 
-### Parameter sweep
+#### Parameter sweep
 
 Charts are shown automatically on the **Sweep** page in the UI after a run completes. The underlying script `analysis/sweep/visualize_sweep.py` can also be run standalone against existing CSVs. Nine charts are organised into two sections:
 
@@ -906,7 +908,7 @@ Diagnostic charts are shown automatically on the **Validate** page in the UI aft
 
 ## Use Cases
 
-The `use_cases/` directory contains standalone analyses that run on top of the generated factory and simulation data. Each use case has its own script and README.
+The `analysis/use_cases/` directory contains standalone analyses that run on top of the generated factory and simulation data. Each use case has its own script and README.
 
 ### Availability analysis
 
@@ -949,7 +951,7 @@ Output files are written to `export/` in the model root:
 | `verification_monotonicity.html` | Monotonicity test trends (5 charts) |
 | `availability.html` | Availability analysis — only with `--availability` or `--all` |
 
-**Prerequisites:** the relevant CSV data must already exist on disk before running. Run Generate, Sweep, and Verify first (via the UI or `run.py`) to produce the required CSVs. The availability figure is the exception — it re-runs the Monte Carlo analysis on the fly and requires only `config.yaml` with `failures.enabled: true`.
+**Prerequisites:** the relevant CSV data must already exist on disk before running. Run Generate, Sweep, and Verify first via the UI to produce the required CSVs. The availability figure is the exception — it re-runs the Monte Carlo analysis on the fly and requires only `config.yaml` with `failures.enabled: true`.
 
 ---
 
