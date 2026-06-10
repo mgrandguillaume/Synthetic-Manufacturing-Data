@@ -881,7 +881,7 @@ These checks compare simulation output against predictions from queueing theory 
 
 | Check | Theory | Tolerance |
 |---|---|---|
-| Little's Law | `L = λ × W`, where L is the average number of orders in the system, λ is the order arrival rate, and W is the mean lead time per order. | 50 % relative error (finite-sample and discretisation bias). |
+| Little's Law | `L = λ × W`, where L is the time-average number of orders in the system, λ is the observed arrival rate, and W is the mean lead time per order. Measured over the middle 80 % of the release horizon (warm-up / drain deletion) to exclude start-up and end-of-run transients. | 5 % relative error (finite-window boundary effect). |
 | Steady-state availability | For exponential inter-failure times (β = 1): `A = λ / (λ + MTTR)`. Configured with λ = 20 h, MTTR = 4 h → A_theory ≈ 0.833. | ±10 percentage points. |
 
 ### Output files

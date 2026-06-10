@@ -1,6 +1,6 @@
 metadata:
   name: simple_assembly_factory
-  seed: 45
+  seed: 50
 bom:
   n_products: 5
   depth: 4

@@ -5,11 +5,14 @@ Tests
 -----
 1. Little's Law  (L = λ × W)
    Run a simulation with a known arrival rate λ (1/order_interarrival).
-   Measure the mean lead time W from throughput.csv.
-   Compute L from the measured throughput rate and W.
-   Compare L_measured and L_theory — expect them within a 50 % relative
-   tolerance (wider than a normal test because discrete simulation and
-   finite order counts both introduce bias).
+   To remove start-up and end-of-run transients, measurement is restricted
+   to the middle 80 % of the release horizon (warm-up / drain deletion).
+   Over that window, L is computed directly as the time-average number of
+   in-flight orders and compared against λ_obs × W̄ within a 5 % relative
+   tolerance.  The residual error is a finite-window boundary effect:
+   in-flight time crossing the window edges enters the two sides of the
+   identity in slightly different proportions.  It is bounded by
+   ~W / window_length and vanishes as n_orders grows.
 
 2. Steady-state availability  (A ≈ λ / (λ + MTTR))
    This classical reliability formula is exact when the inter-failure time
@@ -62,16 +65,24 @@ def _test_littles_law() -> tuple[str, bool, str]:
          converted to orders / hour).
     W  = mean lead time per order (from throughput DataFrame).
 
-    L is computed from the throughput-rate × W formula (equivalent to the
-    time-average count when arrival rate = throughput rate, i.e. the system
-    is in steady state over the observed interval).
+    To avoid start-up and end-of-run bias, the comparison uses **warm-up /
+    drain deletion** (standard simulation practice): measurement is
+    restricted to the middle 80 % of the release horizon — the first and
+    last 10 % of orders define the window edges and are excluded.
 
-    L_direct  = (n_completed × mean_lead_time) / total_makespan
-    L_theory  = λ × W = (1/order_interarrival/tick_duration) × mean_lead_time
+    Over the window [T_a, T_b]:
+        L_direct = (total order in-flight time inside the window) / (T_b − T_a)
+        λ_obs    = (orders released inside the window) / (T_b − T_a)
+        L_theory = λ_obs × W̄,  W̄ = mean lead time of those orders
 
-    We check that L_direct ≈ L_theory within 50 % relative tolerance.
+    With both transients removed, the residual error is a finite-window
+    boundary effect: orders whose [release, completion] interval crosses a
+    window edge contribute to L_direct (clipped at the edge) and to W̄
+    (full lead time, window orders only) in slightly different proportions.
+    The imbalance is bounded by ~W̄ / (T_b − T_a), so we check a 5 %
+    relative tolerance.
     """
-    n_orders           = 12
+    n_orders           = 100
     order_interarrival = 5       # ticks between releases
     tick_duration      = 0.05   # hours per tick
 
@@ -96,19 +107,35 @@ def _test_littles_law() -> tuple[str, bool, str]:
             "Not enough completed orders to compute Little's Law.",
         )
 
-    n_completed  = len(tp)
-    mean_lead_h  = float(tp["LeadTime"].mean())    # hours
-    makespan_h   = float(tp["Time"].max())          # hours from tick 0
+    # Release time of each order (completion − lead time), in hours
+    release_h = tp["Time"] - tp["LeadTime"]
 
-    # L from time-average: total in-flight time / observation window
-    L_direct  = (n_completed * mean_lead_h) / makespan_h if makespan_h > 0 else 0.0
+    # Warm-up / drain deletion: the middle 80 % of the release horizon.
+    # The 10th- and 90th-percentile release times bound the window.
+    rel_sorted = release_h.sort_values().to_numpy()
+    T_a = float(rel_sorted[int(0.10 * len(rel_sorted))])
+    T_b = float(rel_sorted[int(0.90 * len(rel_sorted))])
+    if T_b <= T_a:
+        return (
+            "little_law",
+            False,
+            "Release window degenerate — not enough spread in release times.",
+        )
 
-    # Theoretical L from nominal arrival rate × mean lead time
-    lam_theory = 1.0 / (order_interarrival * tick_duration)   # orders / hour
-    L_theory   = lam_theory * mean_lead_h
+    # Time-average number in system over [T_a, T_b]: each order contributes
+    # the part of its [release, completion] interval that overlaps the window.
+    in_flight_h = (tp["Time"].clip(upper=T_b) - release_h.clip(lower=T_a)).clip(lower=0.0)
+    L_direct    = float(in_flight_h.sum()) / (T_b - T_a)
+
+    # Arrival rate and mean lead time of orders released inside the window
+    mask        = (release_h >= T_a) & (release_h < T_b)
+    n_window    = int(mask.sum())
+    mean_lead_h = float(tp.loc[mask, "LeadTime"].mean())   # hours
+    lam_obs     = n_window / (T_b - T_a)                    # orders / hour
+    L_theory    = lam_obs * mean_lead_h
 
     rel_err = abs(L_direct - L_theory) / max(L_theory, 1e-9)
-    tol     = 0.50   # 50 % relative tolerance
+    tol     = 0.05   # 5 % relative tolerance
 
     passed = rel_err <= tol
     msg = (
