@@ -786,7 +786,7 @@ For single-run programmatic access, `gen_result["complexity"]` holds the full `{
 | File | Contents |
 |---|---|
 | `gen_stats.csv` | Per-run factory structure counts: raw materials, non-raw components, configurations, layout edges, and product complexity (`mean_complexity`, `max_complexity`) |
-| `state_summary.csv` | Per-run, per-tick state percentages averaged across all workstations. "Working" combines Processing and Setup into a single column (`WorkingPct`); the file also includes `StarvedPct`, `BlockedPct`, and `FailedPct`. |
+| `state_summary.csv` | Per-run, per-tick state percentages averaged across all workstations — one column per state: `ProcessingPct`, `SetupPct`, `StarvedPct`, `BlockedPct`, `IdlePct`, `FailedPct`. |
 | `utilization.csv` | Per-run utilization breakdown across all workstations |
 | `throughput.csv` | Per-run throughput and lead time for each completed order |
 | `costs.csv` | Per-run cost breakdown per workstation |
@@ -799,7 +799,7 @@ All files include the run's sweep parameters and alpha as leading columns so row
 
 Charts are shown automatically on the **Simulate** page in the UI after a run completes. The underlying script `engine/simulate/visualize_sim.py` can also be run standalone against existing CSVs. Five charts are produced:
 
-1. **Machine state % over iterations** — for every tick, the percentage of all workstations in the Working, Starved, and Blocked states. Faint raw lines show per-tick values; bold lines show a rolling average. This chart follows the CLEMATIS convention from Lopes et al.
+1. **Machine state % over iterations** — for every tick, the percentage of all workstations in each of the six states (Processing, Setup, Blocked, Starved, Idle, Failed). Faint raw lines show per-tick values; bold lines show a rolling average. This chart follows the CLEMATIS convention from Lopes et al.
 2. **Utilisation by workstation** — stacked bar showing how each workstation split its time across all six states.
 3. **Throughput over time** — cumulative completed orders as a step chart, with mean lead time annotated.
 4. **Cost breakdown** — stacked bar of setup, operating, and transport costs per workstation.
@@ -820,7 +820,7 @@ Charts are shown automatically on the **Sweep** page in the UI after a run compl
 6. Mean lead time vs α (split by depth)
 7. Starved % vs α (split by depth)
 8. Mean state % over iterations — sweep-wide average of the CLEMATIS chart
-9. **% Working machines vs α** (full-width) — shows how machine utilisation changes with the serial/parallel topology ratio, split by depth so each line covers its own α range
+9. **% Processing machines vs α** (full-width) — shows how machine utilisation changes with the serial/parallel topology ratio, split by depth so each line covers its own α range
 
 ---
 

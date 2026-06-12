@@ -180,9 +180,11 @@ def _build_figures(results: dict) -> dict:
     SMOOTH      = 20   # rolling window in ticks (applied after downsampling)
 
     MS_STATES = [
-        ("processing", theme.STATE_COLORS["processing"], "Working"),
+        ("processing", theme.STATE_COLORS["processing"], "Processing"),
+        ("setup",      theme.STATE_COLORS["setup"],      "Setup"),
         ("blocked",    theme.STATE_COLORS["blocked"],    "Blocked"),
         ("starved",    theme.STATE_COLORS["starved"],    "Starved"),
+        ("idle",       theme.STATE_COLORS["idle"],       "Idle"),
         ("failed",     theme.STATE_COLORS["failed"],     "Failed"),
     ]
 

@@ -41,7 +41,7 @@ STATE_COLORS: dict[str, str] = {
     "setup":      "#d29922",
     "blocked":    "#f78166",
     "starved":    "#a371f7",
-    "idle":       "#30363d",
+    "idle":       "#9ba8b4",   # light grey — visible on the dark background
     "failed":     "#da3633",   # red — machine breakdown
 }
 

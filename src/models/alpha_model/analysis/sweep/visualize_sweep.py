@@ -77,13 +77,16 @@ def _load_state_mean(path: str, max_plot_points: int = 1500) -> pd.DataFrame:
     After aggregation the result is downsampled to at most *max_plot_points*
     evenly-spaced ticks so the Plotly CLEMATIS chart stays responsive.
     """
-    _state_cols = ["WorkingPct", "StarvedPct", "BlockedPct", "FailedPct"]
+    _state_cols = ["ProcessingPct", "SetupPct", "StarvedPct",
+                   "BlockedPct", "IdlePct", "FailedPct"]
     _read_cols  = ["Tick"] + _state_cols
 
     sum_df:   pd.DataFrame | None = None
     count_ser: pd.Series   | None = None
 
-    for chunk in pd.read_csv(path, chunksize=200_000, usecols=_read_cols):
+    _wanted = set(_read_cols)
+    for chunk in pd.read_csv(path, chunksize=200_000,
+                             usecols=lambda c: c in _wanted):
         present = [c for c in _state_cols if c in chunk.columns]
         grp     = chunk.groupby("Tick")
         c_sum   = grp[present].sum()
@@ -245,7 +248,7 @@ def show(sweep_dir: str = _DEFAULT_SWEEP_DIR) -> None:
             "Starved % vs Alpha",
             # Row 5
             "Mean State % over Iterations  (sweep-wide avg)",
-            "% Working Machines vs Alpha",
+            "% Processing Machines vs Alpha",
         ],
         specs=[[{}, {}]] * 5,
         vertical_spacing=0.10,
@@ -351,10 +354,12 @@ def show(sweep_dir: str = _DEFAULT_SWEEP_DIR) -> None:
 
     # ── Row 5 — CLEMATIS sweep-wide avg | % Working vs alpha ──────────────────
     _clematis_series = [
-        ("WorkingPct", "Working", theme.STATE_COLORS["processing"]),
-        ("StarvedPct", "Starved", theme.STATE_COLORS["starved"]),
-        ("BlockedPct", "Blocked", theme.STATE_COLORS["blocked"]),
-        ("FailedPct",  "Failed",  theme.STATE_COLORS["failed"]),
+        ("ProcessingPct", "Processing", theme.STATE_COLORS["processing"]),
+        ("SetupPct",      "Setup",      theme.STATE_COLORS["setup"]),
+        ("StarvedPct",    "Starved",    theme.STATE_COLORS["starved"]),
+        ("BlockedPct",    "Blocked",    theme.STATE_COLORS["blocked"]),
+        ("IdlePct",       "Idle",       theme.STATE_COLORS["idle"]),
+        ("FailedPct",     "Failed",     theme.STATE_COLORS["failed"]),
     ]
     for state_col, state_label, state_color in _clematis_series:
         if state_col not in state_mean_tick.columns:
@@ -375,7 +380,7 @@ def show(sweep_dir: str = _DEFAULT_SWEEP_DIR) -> None:
             line=dict(color=theme.palette(i), width=2.5),
             marker=dict(size=8, color=theme.palette(i)),
             legend="legend10",
-            hovertemplate=f"depth={s['label']}<br>α: %{{x:.3f}}<br>Working: %{{y:.1f}}%<extra></extra>",
+            hovertemplate=f"depth={s['label']}<br>α: %{{x:.3f}}<br>Processing: %{{y:.1f}}%<extra></extra>",
         ), row=5, col=2)
 
     # ── Global styling ─────────────────────────────────────────────────────────
@@ -415,7 +420,7 @@ def show(sweep_dir: str = _DEFAULT_SWEEP_DIR) -> None:
     fig.update_xaxes(title_text="Sharing ratio",            title_font=dict(color=theme.SUBTEXT), row=3, col=2)
     fig.update_xaxes(title_text="Sharing ratio",            title_font=dict(color=theme.SUBTEXT), row=4, col=1)
     fig.update_xaxes(title_text="α = depth / workstations", title_font=dict(color=theme.SUBTEXT), row=4, col=2)
-    fig.update_xaxes(title_text="Iteration (tick)",         title_font=dict(color=theme.SUBTEXT), row=5, col=1)
+    fig.update_xaxes(title_text="Time steps",               title_font=dict(color=theme.SUBTEXT), row=5, col=1)
     fig.update_xaxes(title_text="α = depth / workstations", title_font=dict(color=theme.SUBTEXT), row=5, col=2)
 
     fig.update_yaxes(title_text="Components (non-raw)", title_font=dict(color=theme.SUBTEXT), row=1, col=1)
@@ -427,7 +432,7 @@ def show(sweep_dir: str = _DEFAULT_SWEEP_DIR) -> None:
     fig.update_yaxes(title_text="Cost share (%)",       title_font=dict(color=theme.SUBTEXT), row=4, col=1)
     fig.update_yaxes(title_text="Starved (%)",          title_font=dict(color=theme.SUBTEXT), row=4, col=2)
     fig.update_yaxes(title_text="% of machines",        title_font=dict(color=theme.SUBTEXT), row=5, col=1)
-    fig.update_yaxes(title_text="Working (%)",          title_font=dict(color=theme.SUBTEXT), row=5, col=2)
+    fig.update_yaxes(title_text="Processing (%)",       title_font=dict(color=theme.SUBTEXT), row=5, col=2)
 
     return fig
 

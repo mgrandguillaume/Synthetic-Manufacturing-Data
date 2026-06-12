@@ -60,7 +60,9 @@ def show(sim_dir: str = _DEFAULT_SIM_DIR) -> None:
     CHART_STATES = [
         ("starved",    theme.STATE_COLORS["starved"],    "Starved"),
         ("blocked",    theme.STATE_COLORS["blocked"],    "Blocked"),
-        ("processing", theme.STATE_COLORS["processing"], "Working"),
+        ("processing", theme.STATE_COLORS["processing"], "Processing"),
+        ("setup",      theme.STATE_COLORS["setup"],      "Setup"),
+        ("idle",       theme.STATE_COLORS["idle"],       "Idle"),
         ("failed",     theme.STATE_COLORS["failed"],     "Failed"),
     ]
 
@@ -234,7 +236,7 @@ def show(sim_dir: str = _DEFAULT_SIM_DIR) -> None:
 
     theme.apply_axis_style(fig)
 
-    fig.update_xaxes(title_text="Iteration (tick)", title_font=dict(color=theme.SUBTEXT), row=1, col=1)
+    fig.update_xaxes(title_text="Time steps",       title_font=dict(color=theme.SUBTEXT), row=1, col=1)
     fig.update_xaxes(title_text="Workstation",      title_font=dict(color=theme.SUBTEXT), row=2, col=1)
     fig.update_xaxes(title_text="Time (h)",         title_font=dict(color=theme.SUBTEXT), row=2, col=2)
     fig.update_xaxes(title_text="Workstation",      title_font=dict(color=theme.SUBTEXT), row=3, col=1)

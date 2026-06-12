@@ -225,15 +225,18 @@ def main(progress_callback=None, max_runs: int | None = None):
                 .mul(100)
                 .reset_index()
             )
-            for col in ["processing", "starved", "blocked", "failed"]:
+            for col in ["processing", "setup", "starved", "blocked", "idle", "failed"]:
                 if col not in tick_pct.columns:
                     tick_pct[col] = 0.0
             tick_pct = tick_pct.rename(columns={
-                "processing": "WorkingPct",
+                "processing": "ProcessingPct",
+                "setup":      "SetupPct",
                 "starved":    "StarvedPct",
                 "blocked":    "BlockedPct",
+                "idle":       "IdlePct",
                 "failed":     "FailedPct",
-            })[["Tick", "WorkingPct", "StarvedPct", "BlockedPct", "FailedPct"]]
+            })[["Tick", "ProcessingPct", "SetupPct", "StarvedPct",
+                "BlockedPct", "IdlePct", "FailedPct"]]
             tagged_states = tick_pct.copy()
             for col, val in reversed(tag.items()):
                 tagged_states.insert(0, col, val)
