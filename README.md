@@ -31,29 +31,39 @@ The original implementation can be found
 
 ### This Project
 
-This project extends the CLEMATIS framework in three key ways.
+This project extends the MN-RN and CLEMATIS framework into a complete,
+verifiable synthetic data generator. The main developments:
 
-First, it moves from a topology-driven to a **product-driven** approach,
-where the factory layout and machine configurations are derived from
-the requirements of a defined product or product family expressed as a
-Bill of Materials (BOM).
+- **Product-driven generation** - the original framework builds the
+  factory from graph parameters alone, without reference to what the
+  factory makes. Here, the entire factory (workstations, capabilities,
+  and connections) is derived from a Bill of Materials (BOM), so the
+  structure is internally consistent with the products it produces.
+- **Multi-product support** - a factory can produce multiple distinct
+  products, with a configurable sharing ratio controlling how often
+  intermediate components are reused across assemblies and products,
+  mirroring industrial platform strategies.
+- **Heterogeneous machine parameters** - every (workstation, component)
+  pair receives independently sampled processing times, setup times,
+  and costs, and processing times scale with a **product complexity
+  metric C** (the number of distinct non-raw component types a product
+  requires). This replaces the original assumption that all machines
+  are identical.
+- **Representative machine failures** - per-machine Weibull failure models
+  with age-dependent (wear-out) failure probabilities and explicit
+  repair cycles, replacing the original constant per-tick failure
+  probability.
+- **Verification and analysis** - a verification suite (conservation
+  laws, boundary cases, monotonicity, statistical checks incl.
+  Little's Law), a parameter sweep over the structural parameter
+  space, and a system availability analysis comparing theory against
+  Monte Carlo simulation.
 
-Second, it introduces **heterogeneous machine parameters** drawn from
-realistic probability distributions — including Weibull failure models
-with age-dependent failure probabilities — replacing the assumption that
-all machines in the network are identical.
-
-Third, it adds a **verification suite** that checks conservation laws,
-boundary conditions, monotonicity, and statistical properties of the
-simulator, and a **complexity metric C** (number of distinct non-raw
-component types reachable from each product in the BOM) to characterise
-structural diversity across generated factories.
-
-The goal is to produce synthetic factory data that is more
-representative of the diversity of real manufacturing systems,
-and more useful for researchers benchmarking optimization and
-simulation models. The latest model ships a Dash web UI that lets users
-configure, run, and analyse all of the above interactively in a browser.
+The goal is to produce synthetic factory data that better reflects the
+diversity of real manufacturing systems, for researchers benchmarking
+optimization and simulation models without access to real factory
+data. The latest model ships a Dash web UI that lets users configure,
+run, and analyse all of the above interactively in the browser.
 
 ---
 
